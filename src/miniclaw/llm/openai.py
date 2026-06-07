@@ -62,9 +62,7 @@ class OpenAILLM(BaseLLM):
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {"_raw": tc.function.arguments}
-                tool_calls.append(
-                    ToolCall(id=tc.id, name=tc.function.name, arguments=args)
-                )
+                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
         return LLMResponse(
             content=message.content or "",

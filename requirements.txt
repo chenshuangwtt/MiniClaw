@@ -1,0 +1,6 @@
+# Pip fallback only. Prefer pyproject.toml + uv for development:
+#   uv pip install -e ".[dev]"
+openai>=1.0
+tiktoken>=0.7
+pydantic>=2.0
+mem0ai>=0.1

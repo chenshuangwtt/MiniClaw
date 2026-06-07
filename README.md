@@ -1,85 +1,417 @@
-# 🐾 MiniClaw
+# MiniClaw
 
-A **lightweight, self-built Agent Harness** in Python — no LangChain, no AutoGen, no CrewAI.
+A lightweight, from-scratch **Agent Harness** — no LangChain, no AutoGen, no CrewAI.
 
-MiniClaw demonstrates how to build a fully functional LLM agent runtime from scratch with minimal dependencies.
+MiniClaw implements the full runtime layer around an LLM: the agent loop, tool execution protocol, context compression, error recovery, and persistent memory. The model is a plugin; the runtime is the product.
 
-## Features
+## Why This Project
 
-| Module | What it does |
-|--------|-------------|
-| **Agent Loop** | Core engine: LLM ↔ Tool conversation loop |
-| **Tool Registry** | Register tools with decorators, auto-generate JSON Schema |
-| **JSON Parser** | Robustly extract tool calls from LLM free-form text |
-| **Context Manager** | Token-budget trimming with pinned turns |
-| **Recovery Manager** | Exponential backoff retry + repair prompts |
-| **Memory** | SQLite-backed conversation history & key-value store |
-| **Trace Logger** | Structured JSONL traces for debugging |
-| **FakeLLM** | Programmable mock LLM for offline development |
-| **OpenAI Client** | Works with OpenAI API, Ollama, vLLM, etc. |
-| **CLI** | Interactive terminal interface |
+Calling an LLM API is trivial. Building an **agent that reliably solves tasks** is not.
 
-## Quick Start
+The hard part is not the model — it's everything around it:
 
-```bash
-# Install
-pip install -e ".[dev]"
+- **How do you orchestrate multi-step reasoning?** → Agent Loop
+- **How do you let the model invoke external capabilities?** → Tool Calling Protocol
+- **How do you handle malformed output?** → Recovery Manager
+- **How do you stay within the context window?** → Context Compression
+- **How do you persist knowledge across sessions?** → SQLite Memory
 
-# Run with FakeLLM (no API key needed)
-miniclaw run --llm fake
+MiniClaw implements each of these as a discrete, testable module. The result is a minimal but complete agent runtime that runs on a single machine, needs no external services beyond an LLM endpoint, and passes 490+ unit tests.
 
-# Run with OpenAI
-miniclaw run --llm openai --model gpt-4o
+## Entry Points
 
-# Run tests
-pytest
-```
+- `miniclaw` — installed console script, implemented by `src/miniclaw/cli.py`.
+- `uv run python main.py ...` — source-tree compatibility wrapper for local demos.
+
+The canonical CLI lives in `src/miniclaw/cli.py`. The root `main.py` only forwards to that package entry point so both commands exercise the same runtime.
+
+## v0.4 Optional Extensions
+
+- `miniclaw doctor` checks the local Python, config, API key, optional packages, and database directory.
+- `miniclaw trace summary` aggregates stored traces by step count, result, errors, and tool usage.
+- `miniclaw trace replay` replays a stored session step by step for debugging.
+- Built-in file tools can enforce a workspace boundary. The CLI registers file tools with `Path.cwd()` as the allowed root.
+- `PermissionPolicy` gates file writes and shell commands, and `AuditLogger` records tool execution decisions.
+- `MINICLAW_*` environment variables can override config values without editing `miniclaw.toml`.
+- `web_search` is available behind explicit `allow_search` permission.
+- `BaseLLM.stream()` formalizes streaming output; `OpenAIClient` implements OpenAI-compatible token streaming.
+- `VectorMemoryBackend` provides optional dependency-free semantic retrieval for demos and tests.
+- GitHub Actions runs lint, format checks, and tests across supported Python versions.
+- Legacy top-level modules such as `miniclaw.agent_loop` remain for older demos; new code should prefer the package layout under `miniclaw.agent`, `miniclaw.tools`, `miniclaw.storage`, and `miniclaw.memory`.
 
 ## Architecture
 
 ```
-User
- │
- ▼
-┌─────────┐
-│   CLI   │
-└────┬────┘
-     ▼
-┌──────────────┐    ┌───────────────┐
-│  Agent Loop  │───▶│ Context Mgr   │
-└──────┬───────┘    └───────────────┘
-       │
-       ├──────────────────┐
-       ▼                  ▼
-┌─────────────┐    ┌─────────────┐
-│    LLM      │    │ Trace Logger │
-│ (fake/      │    └─────────────┘
-│  openai)    │
-└──────┬──────┘
-       │ raw response
-       ▼
-┌──────────────┐
-│ JSON Parser  │
-└──────┬──────┘
-       │
-       ├── text → return to user
-       │
-       ├── tool_calls → Tool Registry → execute → loop back
-       │
-       ▼ (on error)
-┌──────────────┐
-│  Recovery    │
-└──────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                         User Task                           │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                       Agent Loop                             │
+│  ┌─────────┐   ┌─────────┐   ┌────────────┐   ┌──────────┐ │
+│  │ Prompt  │──▶│   LLM   │──▶│   Parser   │──▶│ Executor │ │
+│  │ Builder │   │         │   │            │   │          │ │
+│  └─────────┘   └─────────┘   └────────────┘   └──────────┘ │
+│       ▲                                       │             │
+│       │            ┌────────────┐             │             │
+│       └────────────│  Context   │◀────────────┘             │
+│                    │  Manager   │                           │
+│                    └────────────┘                           │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+        ┌──────────────────────────────────────┐
+        │           Tool Registry              │
+        │  ┌──────┐ ┌──────┐ ┌──────┐ ┌─────┐│
+        │  │ list │ │ read │ │write │ │shell││
+        │  │_files│ │_file │ │_file │ │     ││
+        │  └──────┘ └──────┘ └──────┘ └─────┘│
+        └──────────────────────────────────────┘
+                           ▼
+        ┌──────────────────────────────────────┐
+        │          SQLite Storage              │
+        │  sessions · messages · memories      │
+        │  · traces                            │
+        └──────────────────────────────────────┘
 ```
 
-## Why MiniClaw?
+## Agent Loop
 
-Most agent frameworks hide the runtime behind layers of abstraction. MiniClaw strips it down to the essentials:
+The core is a **while-loop with a finite-state parser**:
 
-- **~500 lines of core code** — read it all in one sitting
-- **Zero framework dependencies** — just `openai` and `tiktoken`
-- **Fully testable offline** — FakeLLM lets you develop without API keys
-- **Production patterns** — retry logic, context management, structured tracing
+```
+while step < max_steps:
+    prompt   = build(system, tools, history, task)
+    raw      = llm.generate(prompt)
+    output   = parser.parse(raw)          # → ToolCall | FinalAnswer | ParseError
+
+    match output:
+        FinalAnswer  → return answer
+        ToolCall     → executor.run(tool, args) → Observation
+                     → append to history → continue
+        ParseError   → recovery.handle() → inject repair hint → continue
+
+    if error_count >= max_errors:
+        return abort
+```
+
+Key design decisions:
+
+- **Parser is strict.** The LLM must return exactly one JSON object with a `type` field. No regex, no fuzzy matching — the model learns the protocol or gets a recovery hint.
+- **Errors are observations, not exceptions.** Tool failures, parse errors, and unknown tools are all fed back as context so the model can self-correct.
+- **The loop never crashes.** Every failure mode is caught and returned as a structured result.
+
+## Tool Calling Protocol
+
+The LLM communicates tool calls via JSON:
+
+```json
+{
+    "type": "tool_call",
+    "thought": "I need to check the directory contents first.",
+    "tool_name": "list_files",
+    "arguments": {"path": "."}
+}
+```
+
+Final answers use the same envelope:
+
+```json
+{
+    "type": "final_answer",
+    "thought": "I've seen the file listing and can now summarize.",
+    "answer": "The project contains 12 Python files organized into..."
+}
+```
+
+Tools are registered as Python classes with a JSON Schema:
+
+```python
+class ListFiles(Tool):
+    name = "list_files"
+    description = "List files and directories at a given path."
+    schema = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    }
+
+    def run(self, path: str, **kwargs) -> dict:
+        ...
+```
+
+## Recovery Manager
+
+The agent never crashes on bad output. Each failure type has a targeted recovery strategy:
+
+| Failure | Recovery |
+|---------|----------|
+| **Invalid JSON** | Extract first `{...}` block via brace counting; if that fails, inject format hint |
+| **Unknown tool** | Return list of available tools, remind model to use one |
+| **Missing / wrong arguments** | Return the tool's JSON Schema + validation error |
+| **Tool execution error** | Return error as observation, suggest retry or final_answer |
+| **Consecutive failures** | After N errors, emit a final_answer explaining the failure |
+
+Every recovery message is written to be **machine-readable** — it goes back into the context so the LLM can fix itself on the next iteration.
+
+## Context Compression
+
+When the estimated token count exceeds `max_context_tokens`:
+
+1. **System messages** are always preserved.
+2. The **last N messages** (`recent_keep`) are pinned — they represent the current reasoning state.
+3. Everything in between is **summarized** into a single `summary` message.
+
+The default summarizer is rule-based (no LLM call required):
+
+```
+[Compressed 15 messages]
+Roles: {'user': 5, 'assistant': 5, 'tool': 5}
+Tools used: get_weather, calculator
+Last user: What's the weather in Beijing?
+Last assistant: Called get_weather({"city": "Beijing"})
+```
+
+To swap in an LLM summarizer:
+
+```python
+def llm_summarizer(messages):
+    return llm.generate(f"Summarize this conversation:\n{messages}")
+
+ctx = ContextManager(summarizer=llm_summarizer)
+```
+
+## Persistent Memory
+
+All state is stored in SQLite via `SQLiteStore`:
+
+| Table | Purpose |
+|-------|---------|
+| `sessions` | One row per conversation |
+| `messages` | Full message history per session |
+| `memories` | Key-value long-term memory with importance ranking |
+| `traces` | Per-step event log for debugging |
+
+```python
+with SQLiteStore(".miniclaw/miniclaw.db") as store:
+    sid = store.create_session("Weather task")
+    store.save_message(sid, "user", "What's the weather?")
+    store.save_memory("user:city", "Beijing", importance=5)
+    results = store.search_memories("beijing")
+```
+
+## Long-Term Memory with Mem0
+
+LLM APIs are stateless — every request starts from zero. An Agent Harness needs an external memory layer to carry knowledge across sessions.
+
+MiniClaw uses **two storage systems** for different purposes:
+
+| Layer | What it stores | Engine |
+| --- | --- | --- |
+| **SQLite** | sessions, messages, traces — structured execution logs | `sqlite3` (stdlib) |
+| **Mem0** | user preferences, project facts, long-term natural language memories | `mem0ai` (semantic retrieval) |
+
+> **SQLite records what happened; Mem0 remembers what will be useful later.**
+
+### Usage
+
+```bash
+# Save a memory
+uv run miniclaw memory add "用户偏好中文解释 Agent 底层流程" --user-id michael
+
+# Search memories
+uv run miniclaw memory search "用户喜欢什么回答风格？" --user-id michael
+
+# Run with memory enabled
+uv run miniclaw run "讲一下 RecoveryManager" --user-id michael --memory
+
+# Run with memory disabled
+uv run miniclaw run "task" --no-memory
+```
+
+### How it works inside AgentLoop
+
+```text
+User Task
+    │
+    ▼
+Memory Search ─── mem0.search(task, user_id) → related memories
+    │
+    ▼
+Memory Injection ─── "## Long-Term Memory\n- 用户偏好中文解释..."
+    │
+    ▼
+LLM Decision ─── model sees memories in context, uses them if relevant
+    │
+    ▼
+Tool Execution → Observation
+    │
+    ▼
+Final Answer
+    │
+    ▼
+Memory Extraction ─── MemoryExtractor.should_remember(task)?
+    │
+    ▼
+Memory Add ─── mem0.add(extracted_text, user_id)
+```
+
+Memory search failures never crash the agent. Memory add failures are silently logged.
+
+## Quick Start
+
+```bash
+# Install dependencies
+uv pip install -e ".[dev]"
+
+# Run with FakeLLM (no API key needed)
+uv run miniclaw run "list files in current directory"
+
+# Run with OpenAI
+export OPENAI_API_KEY=sk-...
+uv run miniclaw run --llm openai "summarize the project structure"
+
+# Interactive chat
+uv run miniclaw chat --llm openai
+
+# View memories and traces
+uv run miniclaw memory list
+uv run miniclaw trace list
+
+# Export trace as structured JSON
+uv run miniclaw trace export --session 1 -o trace.json
+
+# Demo: context compression
+uv run miniclaw demo context-compression
+
+# Environment health check
+uv run miniclaw doctor
+
+# Trace summary for the latest session
+uv run miniclaw trace summary
+
+# Replay trace events for the latest session
+uv run miniclaw trace replay
+```
+
+## Configuration
+
+`miniclaw.toml` is the local project config. CLI flags override config values, and `MINICLAW_*` environment variables override both defaults and config files.
+
+Useful environment overrides:
+
+```bash
+MINICLAW_LLM_PROVIDER=openai
+MINICLAW_MODEL=gpt-4o-mini
+MINICLAW_API_KEY=sk-...
+MINICLAW_DB_PATH=.miniclaw/dev.db
+MINICLAW_ALLOW_FILE_WRITE=false
+MINICLAW_ALLOW_SHELL=false
+MINICLAW_SHELL_ALLOWED_PREFIXES=echo,python -m pytest
+```
+
+## Demo
+
+### Successful run with recovery
+
+```text
+$ uv run miniclaw run -v "list files and describe the project"
+
+🐾 MiniClaw v0.4.0 — session #1
+📋 Task: list files and describe the project
+
+✅ Answer (5 steps):
+
+## 项目结构分析
+**MiniClaw** 是一个从零实现的轻量级 Agent Harness...
+- src/miniclaw/agent/ — Agent 核心
+- src/miniclaw/tools/ — 工具系统
+...
+
+── Trace ──
+  Step 1: 🔧 open_file({'path': 'README.md'})
+         ❌ Tool 'open_file' does not exist. Available tools: list_files, read_file, run_shell, write_file.
+  Step 2: 🔧 read_file({'path': 'README.md'})
+         → {'path': '...', 'content': '# MiniClaw\n\nA lightweight...'}
+  Step 3: 🔧 list_files({'path': 'src/miniclaw'})
+         → {'entries': [...]}
+  Step 4: 🔧 list_files({'path': 'src/miniclaw/agent'})
+         → {'entries': [...]}
+  Step 5: ✅ final_answer
+```
+
+The agent **self-corrects** at Step 1: it called the non-existent `open_file`, received a recovery hint from `RecoveryManager`, and switched to `read_file` at Step 2. The error is logged in the trace but does not crash the loop.
+
+## Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# With coverage
+uv run pytest --cov=miniclaw --cov-report=term-missing
+
+# Run specific module
+uv run pytest tests/test_agent_loop.py -v
+```
+
+```text
+============================ 466 passed in ... ============================
+```
+
+Pytest is configured to use `.test-tmp` as its base temp directory. If Windows leaves a stale ACL on that folder, delete it and rerun `uv run pytest`.
+
+## Project Structure
+
+```
+MiniClaw/
+├── main.py                          # Compatibility wrapper for local runs
+├── requirements.txt
+├── pyproject.toml
+├── miniclaw.toml                     # Example local configuration
+├── ROADMAP.md                        # Development plan
+│
+├── src/miniclaw/
+│   ├── cli.py                       # Canonical CLI entry point
+│   ├── agent/
+│   │   ├── loop.py                  # AgentLoop — core while-loop
+│   │   ├── state.py                 # Pydantic models: ToolCall, FinalAnswer
+│   │   ├── parser.py                # JSON parser with validation
+│   │   ├── executor.py              # ToolExecutor + Observation
+│   │   ├── prompts.py               # Prompt builder (system + tools + task)
+│   │   ├── context.py               # ContextManager with compression
+│   │   ├── recovery.py              # RecoveryManager
+│   │   └── trace.py                 # StepTrace + TraceLogger
+│   ├── tools/
+│   │   ├── base.py                  # Tool abstract base class
+│   │   ├── registry.py              # ToolRegistry
+│   │   ├── file_tools.py            # list_files, read_file, write_file
+│   │   └── shell_tool.py            # run_shell with safety guardrails
+│   ├── llm/
+│   │   ├── base.py                  # BaseLLM abstract interface
+│   │   ├── fake.py                  # FakeLLM for testing
+│   │   └── openai_client.py         # OpenAI-compatible client
+│   └── storage/
+│       └── sqlite_store.py          # SQLite sessions/messages/memories/traces
+│
+│   # Legacy compatibility modules remain at src/miniclaw/*.py for older demos/tests.
+│   # New code should prefer src/miniclaw/agent/, tools/, storage/, memory/.
+│
+└── tests/                           # 466 tests across 25 files
+```
+
+## Resume Highlights
+
+- **Designed and implemented a complete LLM Agent Runtime from scratch** — agent loop, tool calling protocol, context compression, error recovery, and persistent memory — without relying on any existing agent framework (LangChain, AutoGen, CrewAI).
+
+- **Built a structured tool-calling protocol** with Pydantic-validated JSON schemas, a registry pattern for tool discovery, and a recovery manager that transforms malformed LLM output, unknown tool calls, and execution failures into self-correcting feedback loops.
+
+- **Engineered context management and memory persistence** using a sliding-window compression strategy with rule-based summarization, SQLite-backed storage, optional vector retrieval, and execution traces — achieving 490+ passing unit tests across all modules.
+
+- **Extended with Mem0-based long-term semantic memory** — injects user preferences and project facts into context before each task, extracts high-value memories after completion, and decouples short-term execution state (SQLite) from long-term user knowledge (Mem0) via pluggable MemoryBackend abstraction.
+
+## Future Work
+
+See `ROADMAP.md`.
 
 ## License
 

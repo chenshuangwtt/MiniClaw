@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 from miniclaw.llm.base import BaseLLM, LLMResponse, ToolCall
@@ -11,20 +12,20 @@ from miniclaw.llm.base import BaseLLM, LLMResponse, ToolCall
 class FakeLLM(BaseLLM):
     """Returns pre-scripted responses in order.
 
-    Usage::
+    Supports two usage patterns:
 
-        llm = FakeLLM([
-            "I'll check the weather for you.",
-            '{"tool_call": {"name": "get_weather", "arguments": {"city": "Beijing"}}}',
-            "The weather in Beijing is sunny, 25°C.",
-        ])
-        resp1 = llm.chat(messages)  # → first scripted response
-        resp2 = llm.chat(messages)  # → second
-        resp3 = llm.chat(messages)  # → third
+    1. **Chat mode** (for agent_loop): responses are raw strings that the
+       ``generate()`` method returns verbatim::
 
-    If a scripted string is valid JSON with a ``tool_call`` key, it is parsed
-    into a ``ToolCall`` automatically.  Otherwise the string becomes
-    ``LLMResponse.content``.
+           llm = FakeLLM([
+               '{"type": "tool_call", "tool_name": "search", "arguments": {"q": "test"}}',
+               '{"type": "final_answer", "answer": "Found it!"}',
+           ])
+           llm.generate(prompt)  # → first response
+           llm.generate(prompt)  # → second response
+
+    2. **Legacy chat mode**: responses can also be ``LLMResponse`` objects
+       or JSON with a ``tool_call`` key (backward compatible).
     """
 
     def __init__(self, scripted_responses: list[str | LLMResponse]) -> None:
@@ -42,11 +43,13 @@ class FakeLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
     ) -> LLMResponse:
-        self.call_log.append({
-            "messages": messages,
-            "tools": tools,
-            "temperature": temperature,
-        })
+        self.call_log.append(
+            {
+                "messages": messages,
+                "tools": tools,
+                "temperature": temperature,
+            }
+        )
 
         if self._index >= len(self._responses):
             return LLMResponse(content="[FakeLLM] No more scripted responses.")
@@ -59,6 +62,35 @@ class FakeLLM(BaseLLM):
             return raw
 
         return self._parse_scripted(raw)
+
+    def generate(self, prompt: str) -> str:
+        """Return the next scripted response as a raw string.
+
+        This is the primary interface for the agent loop.
+        """
+        self.call_log.append({"prompt": prompt})
+
+        if self._index >= len(self._responses):
+            return '{"type": "final_answer", "answer": "[FakeLLM] No more scripted responses."}'
+
+        raw = self._responses[self._index]
+        self._index += 1
+
+        if isinstance(raw, LLMResponse):
+            return raw.content
+
+        return raw
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+    ) -> Iterator[str]:
+        """Yield the next scripted response as one text chunk."""
+        response = self.chat(messages, tools=tools, temperature=temperature)
+        if response.content:
+            yield response.content
 
     # ------------------------------------------------------------------
     # Internal helpers

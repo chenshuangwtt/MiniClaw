@@ -1,6 +1,5 @@
 """Tests for json_parser.py."""
 
-import pytest
 from miniclaw.json_parser import parse_llm_response
 
 
@@ -41,7 +40,9 @@ class TestParseLLMResponse:
         assert result.tool_calls[0].name == "search"
 
     def test_multiple_tool_calls(self):
-        raw = '{"tool_calls": [{"name": "a", "arguments": {}}, {"name": "b", "arguments": {"x": 1}}]}'
+        raw = (
+            '{"tool_calls": [{"name": "a", "arguments": {}}, {"name": "b", "arguments": {"x": 1}}]}'
+        )
         result = parse_llm_response(raw)
         assert len(result.tool_calls) == 2
         assert result.tool_calls[0].name == "a"

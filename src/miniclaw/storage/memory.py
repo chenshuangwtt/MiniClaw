@@ -17,7 +17,7 @@ class Memory:
 
     Usage::
 
-        mem = Memory("miniclaw.db")
+        mem = Memory(".miniclaw/miniclaw.db")
         mem.save("user_pref:language", "zh-CN")
         lang = mem.load("user_pref:language")
 
@@ -28,6 +28,8 @@ class Memory:
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
         self._db_path = str(db_path)
+        if self._db_path != ":memory:":
+            Path(self._db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._init_tables()
@@ -63,9 +65,7 @@ class Memory:
 
     def load(self, key: str, default: Any = None) -> Any:
         """Load a value by *key*, returning *default* if not found."""
-        row = self._conn.execute(
-            "SELECT value FROM kv WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
         if row is None:
             return default
         return json.loads(row["value"])
@@ -103,8 +103,7 @@ class Memory:
     def get_messages(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the last *limit* messages in chronological order."""
         rows = self._conn.execute(
-            "SELECT role, content, metadata, created_at "
-            "FROM messages ORDER BY id DESC LIMIT ?",
+            "SELECT role, content, metadata, created_at FROM messages ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [

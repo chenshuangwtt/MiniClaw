@@ -1,4 +1,9 @@
-"""Agent Loop — the core runtime that drives LLM ↔ Tool interactions."""
+"""Legacy Agent API kept for early demos and compatibility.
+
+New code should prefer ``miniclaw.agent.loop.AgentLoop``. This module remains
+available so older examples can continue to run while the package structure is
+being consolidated.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from typing import Any
 from miniclaw.context import ContextManager
 from miniclaw.json_parser import parse_llm_response
 from miniclaw.llm.base import BaseLLM, LLMResponse
-from miniclaw.memory import Memory
+from miniclaw.storage.memory import Memory
 from miniclaw.recovery import RecoveryManager
 from miniclaw.tool_registry import ToolRegistry
 from miniclaw.trace import TraceLogger
@@ -74,11 +79,14 @@ class Agent:
             # --- Call LLM ---
             llm_response = self._call_llm(messages)
             if self.trace:
-                self.trace.log("llm_response", {
-                    "turn": turn,
-                    "content": llm_response.content[:200],
-                    "tool_call_count": len(llm_response.tool_calls),
-                })
+                self.trace.log(
+                    "llm_response",
+                    {
+                        "turn": turn,
+                        "content": llm_response.content[:200],
+                        "tool_call_count": len(llm_response.tool_calls),
+                    },
+                )
 
             # --- Check for tool calls ---
             if not llm_response.tool_calls:
@@ -107,16 +115,29 @@ class Agent:
                 if self.trace:
                     self.trace.log("tool_call:end", {"name": tc.name, "result": result_str[:200]})
                 # Append tool call + result to messages
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": _safe_json(tc.arguments)}}],
-                })
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result_str,
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": _safe_json(tc.arguments),
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result_str,
+                    }
+                )
 
         # Max turns exceeded
         logger.warning("Agent loop exceeded %d turns.", self.max_turns)
@@ -167,6 +188,7 @@ class Agent:
 def _safe_json(obj: Any) -> str:
     """Serialize to JSON, falling back to str on failure."""
     import json
+
     try:
         return json.dumps(obj, ensure_ascii=False)
     except Exception:

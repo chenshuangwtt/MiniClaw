@@ -1,6 +1,5 @@
 """Tests for llm/fake.py."""
 
-import pytest
 from miniclaw.llm.fake import FakeLLM
 from miniclaw.llm.base import LLMResponse
 
@@ -34,9 +33,7 @@ class TestFakeLLM:
         assert llm.chat([]).content == "A"
 
     def test_tool_call_parsing(self):
-        llm = FakeLLM([
-            '{"tool_call": {"name": "search", "arguments": {"q": "test"}}}'
-        ])
+        llm = FakeLLM(['{"tool_call": {"name": "search", "arguments": {"q": "test"}}}'])
         resp = llm.chat([])
         assert resp.has_tool_calls
         assert resp.tool_calls[0].name == "search"
@@ -58,3 +55,8 @@ class TestFakeLLM:
         llm = FakeLLM([""])
         resp = llm.chat([])
         assert resp.content == ""
+
+    def test_stream_yields_scripted_response(self):
+        llm = FakeLLM(["hello"])
+        chunks = list(llm.stream([{"role": "user", "content": "test"}]))
+        assert chunks == ["hello"]

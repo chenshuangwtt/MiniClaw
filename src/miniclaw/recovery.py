@@ -64,7 +64,7 @@ class RecoveryManager:
             except Exception as exc:
                 last_exc = exc
                 if attempt < self.max_retries:
-                    delay = self.backoff_base * (2 ** attempt)
+                    delay = self.backoff_base * (2**attempt)
                     logger.warning(
                         "Attempt %d/%d failed: %s — retrying in %.1fs",
                         attempt + 1,

@@ -39,7 +39,7 @@ class TestTraceLogger:
     def test_span_captures_exception(self):
         t = TraceLogger(console=False)
         with pytest.raises(ValueError):
-            with t.span("boom") as ctx:
+            with t.span("boom"):
                 raise ValueError("bad")
         events = t.get_events()
         end_event = [e for e in events if e["type"] == "boom:end"][0]

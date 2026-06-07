@@ -1,6 +1,5 @@
 """Tests for context.py."""
 
-import pytest
 from miniclaw.context import ContextManager
 
 

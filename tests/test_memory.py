@@ -1,7 +1,6 @@
-"""Tests for memory.py."""
+"""Tests for storage/memory.py."""
 
-import pytest
-from miniclaw.memory import Memory
+from miniclaw.storage.memory import Memory
 
 
 class TestMemoryKV:

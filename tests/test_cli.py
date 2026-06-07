@@ -11,13 +11,14 @@ class TestCLIParser:
         assert exc_info.value.code == 0
 
     def test_run_default(self):
-        args = build_parser().parse_args(["run"])
+        args = build_parser().parse_args(["run", "task"])
         assert args.command == "run"
-        assert args.llm == "fake"
-        assert args.max_turns == 10
+        assert args.task == "task"
+        assert args.llm is None
+        assert args.max_steps is None
 
     def test_run_with_openai(self):
-        args = build_parser().parse_args(["run", "--llm", "openai", "--model", "gpt-4o"])
+        args = build_parser().parse_args(["run", "--llm", "openai", "--model", "gpt-4o", "task"])
         assert args.llm == "openai"
         assert args.model == "gpt-4o"
 

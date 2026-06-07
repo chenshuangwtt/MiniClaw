@@ -1,6 +1,6 @@
 [project]
 name = "miniclaw"
-version = "0.1.0"
+version = "0.4.0"
 description = "A lightweight, self-built Agent Harness — no LangChain, no AutoGen, no CrewAI."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,6 +8,8 @@ license = "MIT"
 dependencies = [
     "openai>=1.0",
     "tiktoken>=0.7",
+    "pydantic>=2.0",
+    "mem0ai>=0.1",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +31,7 @@ packages = ["src/miniclaw"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -p no:cacheprovider --basetemp=.test-tmp"
 
 [tool.ruff]
 target-version = "py311"

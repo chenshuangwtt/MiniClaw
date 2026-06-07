@@ -63,12 +63,14 @@ class ContextManager:
             # Even with all trimmable dropped, still over budget
             kept_trimmable = []
 
-        dropped = trimmable[:len(trimmable) - len(kept_trimmable)]
+        dropped = trimmable[: len(trimmable) - len(kept_trimmable)]
 
         # Optionally summarize dropped messages
         if dropped and self._summarizer:
             summary = self._summarizer(dropped)
-            kept_trimmable = [{"role": "system", "content": f"[Summary of earlier context]: {summary}"}] + kept_trimmable
+            kept_trimmable = [
+                {"role": "system", "content": f"[Summary of earlier context]: {summary}"}
+            ] + kept_trimmable
 
         return system_msgs + kept_trimmable + pinned
 

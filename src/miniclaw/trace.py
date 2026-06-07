@@ -57,7 +57,9 @@ class TraceLogger:
             self._print_event(event)
 
     @contextmanager
-    def span(self, event_type: str, data: dict[str, Any] | None = None) -> Generator[dict[str, Any], None, None]:
+    def span(
+        self, event_type: str, data: dict[str, Any] | None = None
+    ) -> Generator[dict[str, Any], None, None]:
         """Context manager that logs ``start`` and ``end`` with elapsed time.
 
         Usage::

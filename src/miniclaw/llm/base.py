@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,6 +51,44 @@ class BaseLLM(ABC):
             LLMResponse with content and/or tool_calls.
         """
         ...
+
+    def generate(self, prompt: str) -> str:
+        """Simplified interface: send a single prompt string, get text back.
+
+        Default implementation wraps ``chat()`` with a single user message.
+        Subclasses may override for efficiency.
+
+        Args:
+            prompt: The full prompt string (system + tools + task + history).
+
+        Returns:
+            The LLM's text response.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        response = self.chat(messages)
+        return response.content
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+    ) -> Iterator[str]:
+        """Stream response text chunks.
+
+        Providers with native streaming should override this method. The
+        default implementation falls back to ``chat()`` and yields one
+        complete content chunk, which keeps the interface available for
+        tests and non-streaming providers.
+        """
+        response = self.chat(messages, tools=tools, temperature=temperature)
+        if response.content:
+            yield response.content
+
+    def generate_stream(self, prompt: str) -> Iterator[str]:
+        """Simplified streaming interface for a single prompt string."""
+        messages = [{"role": "user", "content": prompt}]
+        yield from self.stream(messages)
 
     def count_tokens(self, messages: list[dict[str, Any]]) -> int:
         """Estimate token count for a message list.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 
@@ -115,6 +115,7 @@ class ToolRegistry:
 # ------------------------------------------------------------------
 # Helper: infer JSON Schema from function signature
 # ------------------------------------------------------------------
+
 
 def _infer_parameters(fn: Callable) -> dict[str, Any]:
     """Best-effort JSON Schema from a function's type annotations."""

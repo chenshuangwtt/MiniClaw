@@ -24,9 +24,7 @@ class ParseResult:
 
 
 # Patterns for extracting JSON blocks from markdown
-_CODE_FENCE_RE = re.compile(
-    r"```(?:json)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
-)
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _TOOL_CALL_MARKER = '"tool_call"'
 
 
@@ -76,6 +74,7 @@ def parse_llm_response(text: str) -> ParseResult:
 # ------------------------------------------------------------------
 # Internal strategies
 # ------------------------------------------------------------------
+
 
 def _try_parse_whole_json(text: str) -> ParseResult | None:
     """Attempt to parse *text* as a complete JSON object."""
@@ -160,9 +159,7 @@ def _try_parse_embedded_tool_calls(text: str) -> ParseResult | None:
     return result
 
 
-def _extract_from_dict(
-    obj: dict[str, Any], full_text: str = ""
-) -> ParseResult:
+def _extract_from_dict(obj: dict[str, Any], full_text: str = "") -> ParseResult:
     """Pull tool_calls out of a parsed JSON dict."""
     tool_calls: list[ToolCall] = []
 
