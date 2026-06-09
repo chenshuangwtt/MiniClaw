@@ -78,9 +78,9 @@ class StorageConfig:
 class ToolsConfig:
     """Built-in tool permission configuration."""
 
-    allow_file_write: bool = True
-    allow_shell: bool = True
-    allow_search: bool = False
+    allow_file_write: bool = False  # Off by default — explicit opt-in required
+    allow_shell: bool = False  # Off by default — explicit opt-in required
+    allow_search: bool = False  # Off by default — explicit opt-in required
     shell_allowed_prefixes: list[str] | None = None
 
 

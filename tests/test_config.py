@@ -43,8 +43,8 @@ class TestStorageConfig:
 class TestToolsConfig:
     def test_defaults(self):
         c = ToolsConfig()
-        assert c.allow_file_write is True
-        assert c.allow_shell is True
+        assert c.allow_file_write is False
+        assert c.allow_shell is False
         assert c.allow_search is False
         assert c.shell_allowed_prefixes is None
 
@@ -55,7 +55,7 @@ class TestConfig:
         assert c.llm.provider == "fake"
         assert c.agent.max_steps == 10
         assert c.storage.db_path == ".miniclaw/miniclaw.db"
-        assert c.tools.allow_shell is True
+        assert c.tools.allow_shell is False
 
     def test_override_simple(self):
         c = Config()

@@ -69,10 +69,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--verbose", "-v", action="store_true", help="Show trace after run.")
     run_p.add_argument(
+        "--stream", action="store_true", default=False, help="Stream LLM output token by token."
+    )
+    run_p.add_argument(
         "--user-id", default="default", help="User ID for memory (default: default)."
     )
     run_p.add_argument("--memory", action="store_true", default=False, help="Enable Mem0 memory.")
     run_p.add_argument("--no-memory", action="store_true", default=False, help="Disable memory.")
+    run_p.add_argument(
+        "--allow-file-write", action="store_true", default=False, help="Allow file write tool."
+    )
+    run_p.add_argument(
+        "--allow-shell", action="store_true", default=False, help="Allow shell tool."
+    )
+    run_p.add_argument(
+        "--allow-search", action="store_true", default=False, help="Allow web search tool."
+    )
 
     # --- chat ---
     chat_p = sub.add_parser("chat", help="Interactive chat mode.")
@@ -111,6 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
     export_p = trace_sub.add_parser("export", help="Export traces as JSON.")
     export_p.add_argument("--session", type=int, default=None, help="Session ID (default: latest).")
     export_p.add_argument(
+        "--output", "-o", default=None, help="Output file path (default: stdout)."
+    )
+    mermaid_p = trace_sub.add_parser("mermaid", help="Export trace as Mermaid flowchart.")
+    mermaid_p.add_argument(
+        "--session", type=int, default=None, help="Session ID (default: latest)."
+    )
+    mermaid_p.add_argument(
         "--output", "-o", default=None, help="Output file path (default: stdout)."
     )
 
@@ -189,9 +208,9 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
     from miniclaw.storage.sqlite_store import SQLiteStore
 
     llm = _create_llm_from_config(config)
-    permission_policy = _permission_policy_from_config(config)
+    permission_policy = _permission_policy_from_config(config, args)
     audit_logger = AuditLogger()
-    registry = _register_default_tools(config)
+    registry = _register_default_tools(config, args)
     memory_backend = _resolve_memory_backend(args)
 
     with SQLiteStore(config.storage.db_path) as store:
@@ -232,8 +251,14 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         if result.success:
             store.save_message(session_id, "user", args.task)
             store.save_message(session_id, "assistant", result.answer)
-            print(f"✅ Answer ({result.steps_taken} steps):")
-            print(f"\n{result.answer}\n")
+            if getattr(args, "stream", False):
+                print(f"✅ Answer ({result.steps_taken} steps):")
+                print()
+                _stream_print(result.answer)
+                print()
+            else:
+                print(f"✅ Answer ({result.steps_taken} steps):")
+                print(f"\n{result.answer}\n")
         else:
             print(f"❌ Failed after {result.steps_taken} steps:")
             print(f"\n{result.error}\n")
@@ -470,11 +495,56 @@ def _cmd_trace(args: argparse.Namespace, config) -> None:
             else:
                 print(output)
 
+    elif args.trace_action == "mermaid":
+        with SQLiteStore(config.storage.db_path) as store:
+            session_id = _resolve_session_id(store, args.session)
+            if session_id is None:
+                return
+
+            conn = store._get_conn()
+            session_row = conn.execute(
+                "SELECT title FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            title = session_row["title"] if session_row else f"Session #{session_id}"
+
+            traces = store.list_traces(session_id)
+            if not traces:
+                print(f"No traces for session #{session_id}.")
+                return
+
+            # Build a TraceLogger from stored traces and generate Mermaid
+            from miniclaw.agent.trace import TraceLogger
+
+            trace = TraceLogger()
+            for t in traces:
+                try:
+                    event = json.loads(t["event_json"])
+                except (json.JSONDecodeError, KeyError):
+                    event = {}
+                trace.log_step(
+                    step=t["step"],
+                    model_output=event.get("model_output", ""),
+                    parsed_action=event.get("parsed_action", ""),
+                    tool_name=event.get("tool_name"),
+                    arguments=event.get("arguments"),
+                    observation=event.get("observation"),
+                    error=event.get("error"),
+                )
+
+            mermaid = trace.to_mermaid(title)
+            if args.output:
+                Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+                Path(args.output).write_text(f"```mermaid\n{mermaid}\n```\n", encoding="utf-8")
+                print(f"Mermaid flowchart saved to {args.output}")
+            else:
+                print(mermaid)
+
     else:
         print("Usage: miniclaw trace list")
         print("       miniclaw trace summary [--session N]")
         print("       miniclaw trace replay [--session N]")
         print("       miniclaw trace export [--session N] [-o file.json]")
+        print("       miniclaw trace mermaid [--session N] [-o file.md]")
 
 
 def _cmd_doctor(config) -> None:
@@ -678,19 +748,30 @@ def _create_llm_from_config(config):
         raise ValueError(f"Unknown LLM provider: {config.llm.provider}")
 
 
-def _permission_policy_from_config(config):
-    """Build the tool permission policy from config."""
+def _permission_policy_from_config(config, args=None):
+    """Build the tool permission policy from config, with CLI overrides."""
     from miniclaw.tools.permissions import PermissionPolicy
 
-    return PermissionPolicy(
+    policy = PermissionPolicy(
         allow_file_write=config.tools.allow_file_write,
         allow_shell=config.tools.allow_shell,
         allow_search=config.tools.allow_search,
         shell_allowed_prefixes=config.tools.shell_allowed_prefixes,
     )
 
+    # CLI flags override config (explicit opt-in)
+    if args is not None:
+        if getattr(args, "allow_file_write", False):
+            policy.allow_file_write = True
+        if getattr(args, "allow_shell", False):
+            policy.allow_shell = True
+        if getattr(args, "allow_search", False):
+            policy.allow_search = True
 
-def _register_default_tools(config=None):
+    return policy
+
+
+def _register_default_tools(config=None, args=None):
     """Register the default set of tools."""
     from miniclaw.tools.file_tools import ListFiles, ReadFile, WriteFile
     from miniclaw.tools.registry import ToolRegistry
@@ -703,6 +784,15 @@ def _register_default_tools(config=None):
     allow_shell = True if config is None else config.tools.allow_shell
     allow_search = False if config is None else config.tools.allow_search
     shell_allowed_prefixes = None if config is None else config.tools.shell_allowed_prefixes
+
+    if args is not None:
+        if getattr(args, "allow_file_write", False):
+            allow_file_write = True
+        if getattr(args, "allow_shell", False):
+            allow_shell = True
+        if getattr(args, "allow_search", False):
+            allow_search = True
+
     registry.register(ListFiles(workspace_root=workspace_root))
     registry.register(ReadFile(workspace_root=workspace_root))
     registry.register(WriteFile(workspace_root=workspace_root, allow_write=allow_file_write))
@@ -710,6 +800,12 @@ def _register_default_tools(config=None):
     if allow_search:
         registry.register(WebSearch())
     return registry
+
+
+def _stream_print(text: str) -> None:
+    """Print an already computed answer incrementally without another LLM call."""
+    for char in text:
+        print(char, end="", flush=True)
 
 
 def _print_trace(steps) -> None:

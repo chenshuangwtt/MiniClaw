@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -10,7 +11,7 @@ from miniclaw.agent.executor import ToolExecutor
 from miniclaw.agent.parser import OutputParser, ParseError
 from miniclaw.agent.prompts import build_full_prompt
 from miniclaw.agent.recovery import RecoveryManager
-from miniclaw.agent.state import FinalAnswer, ToolCall
+from miniclaw.agent.state import AgentOutput, FinalAnswer, ToolCall
 from miniclaw.agent.trace import TraceLogger
 from miniclaw.llm.base import BaseLLM
 from miniclaw.memory.base import MemoryBackend, NullMemoryBackend
@@ -79,6 +80,7 @@ class AgentLoop:
             audit_logger=audit_logger,
         )
         self.parser = OutputParser()
+        self.parse_mode = "auto"  # "auto" | "portable" | "native"
         self.max_steps = max_steps
         self.max_errors = max_errors
         self.context = context or ContextManager()
@@ -124,7 +126,7 @@ class AgentLoop:
 
             # 2. Call LLM
             try:
-                raw_output = self.llm.generate(prompt)
+                raw_output, parsed = self._call_and_parse(prompt, tool_schemas)
             except Exception as exc:
                 error_count += 1
                 trace.log_step(
@@ -143,31 +145,28 @@ class AgentLoop:
                     )
                 continue
 
-            # 3. Parse output
-            try:
-                parsed = self.parser.parse(raw_output)
-            except ParseError as exc:
+            # 3. Handle parse failure
+            if parsed is None:
                 error_count += 1
                 trace.log_step(
                     step=step,
                     model_output=raw_output,
                     parsed_action="parse_error",
-                    error=str(exc.detail),
+                    error="Could not parse LLM output",
                 )
-                logger.warning("Step %d: Parse error: %s", step, exc.detail)
+                logger.warning("Step %d: Parse failed for output: %s", step, raw_output[:100])
 
-                # Use RecoveryManager to build a repair hint
                 recovery_result = self.recovery.handle_invalid_json(raw_output)
                 if recovery_result.get("status") == "repaired":
                     try:
                         parsed = self.parser.parse(recovery_result["output"])
                     except ParseError:
-                        self._inject_recovery(step, recovery_result.get("error", str(exc.detail)))
+                        self._inject_recovery(step, recovery_result.get("error", "parse failed"))
                         if error_count >= self.max_errors:
                             return self._abort_result(error_count, trace, step)
                         continue
                 else:
-                    self._inject_recovery(step, recovery_result.get("error", str(exc.detail)))
+                    self._inject_recovery(step, recovery_result.get("error", "parse failed"))
                     if error_count >= self.max_errors:
                         return self._abort_result(error_count, trace, step)
                     continue
@@ -258,6 +257,77 @@ class AgentLoop:
             history=self._context_to_history(),
             memories=memories,
         )
+
+    def _call_and_parse(
+        self, prompt: str, tool_schemas: list[dict[str, Any]]
+    ) -> tuple[str, AgentOutput | None]:
+        """Call LLM and parse the response. Returns (raw_output, parsed).
+
+        Supports three modes:
+            - ``native``: Use ``llm.chat()`` with tools, parse tool_calls directly.
+            - ``portable``: Use ``llm.generate()``, parse JSON from text.
+            - ``auto``: Try native first; if no tool_calls, fall back to portable.
+
+        Returns:
+            Tuple of (raw_output_string, parsed_output_or_None).
+            If parsing fails, ``parsed`` is ``None`` and caller should handle.
+        """
+        mode = self.parse_mode
+
+        # Native mode: use chat() with tools
+        if mode == "native" and tool_schemas:
+            return self._call_native(prompt, tool_schemas)
+
+        # Portable mode: use generate() + JSON parsing
+        if mode == "portable":
+            return self._call_portable(prompt)
+
+        # Auto mode: try native if tools available, else portable
+        if mode == "auto" and tool_schemas and hasattr(self.llm, "chat"):
+            raw, parsed = self._call_native(prompt, tool_schemas)
+            if parsed is not None and isinstance(parsed, ToolCall):
+                return raw, parsed
+            # No native tool_calls — parse the content as portable JSON
+            try:
+                parsed = self.parser.parse(raw)
+            except Exception:
+                parsed = None
+            return raw, parsed
+
+        return self._call_portable(prompt)
+
+    def _call_native(
+        self, prompt: str, tool_schemas: list[dict[str, Any]]
+    ) -> tuple[str, AgentOutput | None]:
+        """Call LLM using native tool calling (OpenAI-style)."""
+        messages = [{"role": "user", "content": prompt}]
+        response = self.llm.chat(messages, tools=tool_schemas)
+        raw_output = response.content or ""
+
+        if response.has_tool_calls:
+            tc = response.tool_calls[0]
+            parsed = self.parser.parse_native(
+                response.content,
+                [
+                    {
+                        "id": tc.id,
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                ],
+            )
+            return raw_output, parsed
+
+        # No tool_calls — return None to signal caller to try portable
+        return raw_output, None
+
+    def _call_portable(self, prompt: str) -> tuple[str, AgentOutput | None]:
+        """Call LLM using portable JSON protocol."""
+        raw_output = self.llm.generate(prompt)
+        try:
+            parsed = self.parser.parse(raw_output)
+        except ParseError:
+            parsed = None
+        return raw_output, parsed
 
     def _search_memories(self, user_task: str, user_id: str) -> list[str]:
         """Search memory backend for related memories. Never crashes."""

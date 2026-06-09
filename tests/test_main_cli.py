@@ -1,5 +1,6 @@
 """Tests for main.py CLI."""
 
+from argparse import Namespace
 from contextlib import suppress
 import json
 from pathlib import Path
@@ -138,6 +139,13 @@ class TestRunCommand:
         main(["--db", str(db), "run", "--max-steps", "2", "test task"])
         captured = capsys.readouterr()
         assert "MiniClaw" in captured.out
+
+    def test_run_stream_does_not_call_llm_again(self, tmp_path, capsys):
+        db = tmp_path / "test.db"
+        main(["--db", str(db), "run", "--stream", "test task"])
+        captured = capsys.readouterr()
+        assert "[FakeLLM] No more scripted responses" not in captured.out
+        assert "项目结构分析" in captured.out
 
 
 # ============================================================
@@ -520,6 +528,22 @@ class TestDefaultTools:
         names = registry.list()
         assert "web_search" in names
         assert len(names) == 5
+
+    def test_cli_allow_flags_override_registered_tools(self):
+        from miniclaw.agent.config import Config
+        from miniclaw.cli import _register_default_tools
+
+        config = Config()
+        args = Namespace(
+            allow_file_write=True,
+            allow_shell=True,
+            allow_search=True,
+        )
+        registry = _register_default_tools(config, args)
+
+        assert "web_search" in registry.list()
+        assert registry.get("write_file").allow_write is True
+        assert registry.get("run_shell").allow_shell is True
 
 
 class TestDemoCommand:

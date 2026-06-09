@@ -97,5 +97,73 @@ class TraceLogger:
         """Return all traces as plain dicts."""
         return [t.model_dump() for t in self.steps]
 
+    def to_mermaid(self, title: str = "Agent Trace") -> str:
+        """Generate a Mermaid flowchart from the trace steps.
+
+        Renders as a top-to-bottom flowchart showing each step's action,
+        tool call, observation, and errors.
+
+        Returns:
+            A Mermaid diagram string (can be embedded in markdown).
+        """
+        lines = ["flowchart TD"]
+        lines.append(f'    Start["{self._escape(title)}"]')
+
+        prev_node = "Start"
+        for t in self.steps:
+            node_id = f"S{t.step}"
+
+            if t.parsed_action == "final_answer":
+                label = f"✅ Final Answer\\n{self._escape(str(t.observation)[:60])}"
+                lines.append(f'    {node_id}["{label}"]')
+                lines.append(f"    {prev_node} --> {node_id}")
+                lines.append(f"    style {node_id} fill:#90EE90")
+                break
+
+            elif t.parsed_action == "tool_call":
+                label = f"🔧 {t.tool_name}"
+                if t.arguments:
+                    args_str = ", ".join(f"{k}={v}" for k, v in list(t.arguments.items())[:2])
+                    label += f"\\n({self._escape(args_str)})"
+                lines.append(f'    {node_id}["{label}"]')
+                lines.append(f"    {prev_node} --> {node_id}")
+
+                # Observation node
+                obs_id = f"O{t.step}"
+                if t.error:
+                    obs_label = f"❌ {self._escape(t.error[:50])}"
+                    lines.append(f'    {obs_id}["{obs_label}"]')
+                    lines.append(f"    {node_id} --> {obs_id}")
+                    lines.append(f"    style {obs_id} fill:#FFB3BA")
+                elif t.observation is not None:
+                    obs_str = str(t.observation)[:50]
+                    obs_label = f"→ {self._escape(obs_str)}"
+                    lines.append(f'    {obs_id}["{obs_label}"]')
+                    lines.append(f"    {node_id} --> {obs_id}")
+                    lines.append(f"    style {obs_id} fill:#B3D9FF")
+
+                prev_node = node_id
+
+            elif t.parsed_action == "parse_error":
+                label = f"⚠️ Parse Error\\n{self._escape(t.error or '')[:40]}"
+                lines.append(f'    {node_id}["{label}"]')
+                lines.append(f"    {prev_node} --> {node_id}")
+                lines.append(f"    style {node_id} fill:#FFE0B2")
+                prev_node = node_id
+
+            else:
+                label = f"Step {t.step}: {t.parsed_action}"
+                lines.append(f'    {node_id}["{self._escape(label)}"]')
+                lines.append(f"    {prev_node} --> {node_id}")
+                prev_node = node_id
+
+        lines.append("    style Start fill:#E8E8E8")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _escape(text: str) -> str:
+        """Escape special characters for Mermaid labels."""
+        return text.replace('"', "'").replace("\n", " ").replace("\\", "")
+
     def __len__(self) -> int:
         return len(self.steps)

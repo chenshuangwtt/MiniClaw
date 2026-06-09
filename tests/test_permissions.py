@@ -21,27 +21,27 @@ class TestPermissionPolicy:
         assert "Shell execution" in decision.reason
 
     def test_shell_prefixes_allow_matching_command(self):
-        decision = PermissionPolicy(shell_allowed_prefixes=["echo"]).check(
+        decision = PermissionPolicy(allow_shell=True, shell_allowed_prefixes=["echo"]).check(
             "run_shell", {"command": "echo hi"}
         )
         assert decision.allowed is True
 
     def test_shell_prefixes_block_unmatched_command(self):
-        decision = PermissionPolicy(shell_allowed_prefixes=["echo"]).check(
+        decision = PermissionPolicy(allow_shell=True, shell_allowed_prefixes=["echo"]).check(
             "run_shell", {"command": "python --version"}
         )
         assert decision.allowed is False
         assert "allowed prefixes" in decision.reason
 
     def test_shell_prefixes_require_command_boundary(self):
-        decision = PermissionPolicy(shell_allowed_prefixes=["echo"]).check(
+        decision = PermissionPolicy(allow_shell=True, shell_allowed_prefixes=["echo"]).check(
             "run_shell", {"command": "echoevil hello"}
         )
         assert decision.allowed is False
         assert "allowed prefixes" in decision.reason
 
     def test_shell_prefixes_block_command_chaining(self):
-        decision = PermissionPolicy(shell_allowed_prefixes=["echo"]).check(
+        decision = PermissionPolicy(allow_shell=True, shell_allowed_prefixes=["echo"]).check(
             "run_shell", {"command": "echo hello && python --version"}
         )
         assert decision.allowed is False
@@ -49,6 +49,7 @@ class TestPermissionPolicy:
 
     def test_approval_callback_allows(self):
         policy = PermissionPolicy(
+            allow_file_write=True,
             approval_required_tools={"write_file"},
             approval_callback=lambda tool, args: True,
         )
@@ -57,6 +58,7 @@ class TestPermissionPolicy:
 
     def test_approval_callback_rejects(self):
         policy = PermissionPolicy(
+            allow_file_write=True,
             approval_required_tools={"write_file"},
             approval_callback=lambda tool, args: False,
         )

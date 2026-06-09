@@ -43,8 +43,8 @@ class PermissionPolicy:
     supports an optional human approval callback for future interactive flows.
     """
 
-    allow_file_write: bool = True
-    allow_shell: bool = True
+    allow_file_write: bool = False  # Off by default — explicit opt-in required
+    allow_shell: bool = False  # Off by default — explicit opt-in required
     allow_search: bool = False  # Off by default — explicit opt-in required
     shell_allowed_prefixes: list[str] | None = None
     approval_required_tools: set[str] = field(default_factory=set)

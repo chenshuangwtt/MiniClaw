@@ -1,6 +1,6 @@
 # MiniClaw
 
-A lightweight, from-scratch **Agent Harness** — no LangChain, no AutoGen, no CrewAI.
+> **Experimental / Educational / Local-first** — a from-scratch Agent Harness for learning how LLM runtimes work. Not production-ready. No LangChain, no AutoGen, no CrewAI.
 
 MiniClaw implements the full runtime layer around an LLM: the agent loop, tool execution protocol, context compression, error recovery, and persistent memory. The model is a plugin; the runtime is the product.
 
@@ -365,38 +365,57 @@ Pytest is configured to use `.test-tmp` as its base temp directory. If Windows l
 ```
 MiniClaw/
 ├── main.py                          # Compatibility wrapper for local runs
+├── pyproject.toml                   # Project metadata and dependencies
 ├── requirements.txt
-├── pyproject.toml
-├── miniclaw.toml                     # Example local configuration
-├── ROADMAP.md                        # Development plan
+├── miniclaw.toml                    # Example local configuration (gitignored)
+├── ROADMAP.md                       # Development plan
+├── CODE_WALKTHROUGH.md             # Execution flow walkthrough
 │
 ├── src/miniclaw/
 │   ├── cli.py                       # Canonical CLI entry point
-│   ├── agent/
+│   │
+│   ├── agent/                       # Core agent runtime
 │   │   ├── loop.py                  # AgentLoop — core while-loop
 │   │   ├── state.py                 # Pydantic models: ToolCall, FinalAnswer
 │   │   ├── parser.py                # JSON parser with validation
 │   │   ├── executor.py              # ToolExecutor + Observation
-│   │   ├── prompts.py               # Prompt builder (system + tools + task)
+│   │   ├── prompts.py               # Prompt builder (system + tools + task + memory)
 │   │   ├── context.py               # ContextManager with compression
-│   │   ├── recovery.py              # RecoveryManager
-│   │   └── trace.py                 # StepTrace + TraceLogger
-│   ├── tools/
+│   │   ├── recovery.py              # RecoveryManager (5 recovery strategies)
+│   │   ├── trace.py                 # StepTrace + TraceLogger
+│   │   └── config.py                # TOML config loader
+│   │
+│   ├── tools/                       # Tool system
 │   │   ├── base.py                  # Tool abstract base class
 │   │   ├── registry.py              # ToolRegistry
 │   │   ├── file_tools.py            # list_files, read_file, write_file
-│   │   └── shell_tool.py            # run_shell with safety guardrails
-│   ├── llm/
+│   │   ├── shell_tool.py            # run_shell with safety guardrails
+│   │   ├── search_tool.py           # web_search (permission-gated)
+│   │   ├── permissions.py           # PermissionPolicy (default-deny)
+│   │   ├── audit.py                 # AuditLogger for tool execution
+│   │   └── security.py              # Workspace path resolution
+│   │
+│   ├── llm/                         # LLM abstraction layer
 │   │   ├── base.py                  # BaseLLM abstract interface
 │   │   ├── fake.py                  # FakeLLM for testing
-│   │   └── openai_client.py         # OpenAI-compatible client
-│   └── storage/
-│       └── sqlite_store.py          # SQLite sessions/messages/memories/traces
+│   │   ├── openai_client.py         # OpenAI client with streaming
+│   │   └── openai.py                # Legacy OpenAI client
+│   │
+│   ├── memory/                      # Memory abstraction
+│   │   ├── base.py                  # MemoryBackend + NullMemoryBackend
+│   │   ├── extractor.py             # MemoryExtractor (keyword-based)
+│   │   ├── mem0_store.py            # Mem0MemoryBackend (semantic search)
+│   │   └── vector.py                # VectorMemoryBackend (in-memory)
+│   │
+│   ├── storage/                     # Persistent storage
+│   │   ├── sqlite_store.py          # SQLite sessions/messages/memories/traces
+│   │   └── memory.py                # Legacy SQLite key-value store
+│   │
+│   └── multiagent/                  # Multi-agent prototype
+│       ├── agents.py                # PlannerAgent, CoderAgent, ReviewerAgent
+│       └── coordinator.py           # Coordinator (sequential pipeline)
 │
-│   # Legacy compatibility modules remain at src/miniclaw/*.py for older demos/tests.
-│   # New code should prefer src/miniclaw/agent/, tools/, storage/, memory/.
-│
-└── tests/                           # 466 tests across 25 files
+└── tests/                           # 490+ tests across 25 files
 ```
 
 ## Resume Highlights

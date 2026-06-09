@@ -1,10 +1,14 @@
 """Memory extractor — decides whether text is worth remembering, and what to extract.
 
-Uses keyword-based heuristics.  Can be replaced with an LLM-based
-extractor later without changing the interface.
+Features:
+    - Keyword-based heuristics (configurable).
+    - Sensitive information filtering (API keys, passwords, etc.).
+    - Can be replaced with an LLM-based extractor later.
 """
 
 from __future__ import annotations
+
+import re
 
 # Keywords that indicate the user wants something remembered.
 _REMEMBER_KEYWORDS: list[str] = [
@@ -15,6 +19,21 @@ _REMEMBER_KEYWORDS: list[str] = [
     "我希望",
     "从现在开始",
 ]
+
+# Patterns that indicate sensitive information — must NOT be stored.
+_SENSITIVE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"sk-[a-zA-Z0-9]{20,}"),  # OpenAI-style API keys
+    re.compile(r"password\s*[:=]\s*\S+", re.IGNORECASE),
+    re.compile(r"secret\s*[:=]\s*\S+", re.IGNORECASE),
+    re.compile(r"token\s*[:=]\s*\S+", re.IGNORECASE),
+    re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"),  # credit card
+    re.compile(r"-----BEGIN.*PRIVATE KEY-----"),  # PEM private keys
+]
+
+
+def contains_sensitive(text: str) -> bool:
+    """Check whether *text* contains sensitive information (API keys, passwords, etc.)."""
+    return any(p.search(text) for p in _SENSITIVE_PATTERNS)
 
 
 class MemoryExtractor:
@@ -42,19 +61,22 @@ class MemoryExtractor:
     def should_remember(self, text: str) -> bool:
         """Check whether *text* contains any memory-worthy keywords.
 
+        Returns ``False`` if the text contains sensitive information.
+
         Args:
             text: The message text to check.
 
         Returns:
-            ``True`` if at least one keyword is found.
+            ``True`` if at least one keyword is found and no sensitive data.
         """
+        if contains_sensitive(text):
+            return False
         return any(kw in text for kw in self._keywords)
 
     def extract(self, text: str) -> list[str]:
         """Extract memory-worthy fragments from *text*.
 
-        Strategy: find each keyword occurrence and extract the
-        sentence or clause containing it.
+        Filters out sentences containing sensitive information.
 
         Args:
             text: The message text to extract from.
@@ -66,13 +88,12 @@ class MemoryExtractor:
             return []
 
         memories: list[str] = []
-        # Split by common sentence delimiters
         sentences = _split_sentences(text)
 
         for sentence in sentences:
             if any(kw in sentence for kw in self._keywords):
                 cleaned = sentence.strip()
-                if cleaned:
+                if cleaned and not contains_sensitive(cleaned):
                     memories.append(cleaned)
 
         return memories
@@ -80,11 +101,7 @@ class MemoryExtractor:
 
 def _split_sentences(text: str) -> list[str]:
     """Split text into sentences by Chinese and English punctuation."""
-    import re
-
-    # Split on Chinese/English sentence-ending punctuation
     parts = re.split(r"(?<=[。！？.!?\n])\s*", text)
-    # Also split on commas if no sentence-ending punctuation was found
     if len(parts) <= 1:
         parts = re.split(r"[，,；;]", text)
     return [p.strip() for p in parts if p.strip()]

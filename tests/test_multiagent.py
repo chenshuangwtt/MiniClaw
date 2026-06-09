@@ -9,7 +9,7 @@ from miniclaw.multiagent.agents import (
     CoderAgent,
     ReviewerAgent,
 )
-from miniclaw.multiagent.coordinator import Coordinator, PipelineResult
+from miniclaw.multiagent.coordinator import Coordinator, PipelineResult, _is_approved
 from miniclaw.tools.base import Tool
 from miniclaw.tools.registry import ToolRegistry
 
@@ -236,7 +236,9 @@ class TestCoordinator:
             [
                 json.dumps({"type": "final_answer", "thought": "", "answer": "P"}),
                 json.dumps({"type": "final_answer", "thought": "", "answer": "C"}),
-                json.dumps({"type": "final_answer", "thought": "", "answer": "R"}),
+                json.dumps(
+                    {"type": "final_answer", "thought": "", "answer": "APPROVED: looks good"}
+                ),
             ]
         )
         coord = Coordinator(llm)
@@ -275,3 +277,15 @@ class TestPipelineResult:
         assert r.final_answer == ""
         assert r.error is None
         assert r.steps == 0
+
+
+class TestReviewerVerdict:
+    def test_approved_verdicts(self):
+        assert _is_approved("APPROVED") is True
+        assert _is_approved("Verdict: APPROVED") is True
+        assert _is_approved("## Review\nAPPROVED: looks good") is True
+
+    def test_negative_verdicts(self):
+        assert _is_approved("NOT APPROVED") is False
+        assert _is_approved("Verdict: NOT APPROVED") is False
+        assert _is_approved("NEEDS_FIXES: add tests") is False
