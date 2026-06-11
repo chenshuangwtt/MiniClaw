@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from miniclaw.tools.base import Tool
 from miniclaw.tools.permissions import command_matches_allowed_prefix
+
+if TYPE_CHECKING:
+    from miniclaw.tools.sandbox import SandboxExecutor
 
 # Default timeout in seconds.
 DEFAULT_TIMEOUT = 30
@@ -70,12 +73,17 @@ class RunShell(Tool):
         self,
         allow_shell: bool = True,
         allowed_prefixes: list[str] | None = None,
+        sandbox: SandboxExecutor | None = None,
     ) -> None:
         self.allow_shell = allow_shell
         self.allowed_prefixes = allowed_prefixes
+        self.sandbox = sandbox
 
     def run(self, command: str, timeout: int = DEFAULT_TIMEOUT, **kwargs: Any) -> dict[str, Any]:
         """Execute *command* in a subprocess.
+
+        If a ``sandbox`` was provided, delegates to the sandbox executor
+        for restricted execution.
 
         Returns:
             A dict with ``stdout``, ``stderr``, ``exit_code``,
@@ -91,6 +99,10 @@ class RunShell(Tool):
         safe, reason = is_command_safe(command)
         if not safe:
             return {"error": reason}
+
+        # Delegate to sandbox if available
+        if self.sandbox is not None:
+            return self.sandbox.execute(command, timeout=timeout)
 
         try:
             result = subprocess.run(

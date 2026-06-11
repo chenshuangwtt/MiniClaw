@@ -12,6 +12,9 @@ env/
 # uv local state
 .uv-cache/
 
+# Local code indexes
+.codegraph/
+
 # Test / lint / type-check caches
 .pytest_cache/
 .pytest_tmp/

@@ -2,6 +2,7 @@
 
 Sits between the AgentLoop and the memory backends.  Handles:
     - Conflict detection: deduplicate when a new memory overlaps an existing one.
+    - Conflict resolution strategies: skip, replace, or merge.
     - Importance decay: reduce importance of memories that haven't been accessed.
     - Sensitive filtering: refuse to store API keys, passwords, etc.
 
@@ -31,6 +32,11 @@ from miniclaw.memory.extractor import MemoryExtractor, contains_sensitive
 
 logger = logging.getLogger(__name__)
 
+# Conflict resolution strategies
+CONFLICT_SKIP = "skip"
+CONFLICT_REPLACE = "replace"
+CONFLICT_MERGE = "merge"
+
 
 class MemoryManager:
     """High-level memory coordinator with conflict resolution and decay.
@@ -38,8 +44,10 @@ class MemoryManager:
     Args:
         backend: The underlying storage backend.
         extractor: Memory extractor for deciding what to remember.
-        similarity_threshold: Minimum score to consider a search result
-            as conflicting with a new memory (backend-dependent).
+        similarity_threshold: Minimum Jaccard score to consider a search result
+            as conflicting with a new memory.
+        default_conflict_strategy: Default strategy when a conflict is detected.
+            One of ``"skip"`` (default), ``"replace"``, or ``"merge"``.
     """
 
     def __init__(
@@ -47,10 +55,12 @@ class MemoryManager:
         backend: MemoryBackend | None = None,
         extractor: MemoryExtractor | None = None,
         similarity_threshold: float = 0.8,
+        default_conflict_strategy: str = CONFLICT_SKIP,
     ) -> None:
         self.backend = backend or NullMemoryBackend()
         self.extractor = extractor or MemoryExtractor()
         self.similarity_threshold = similarity_threshold
+        self.default_conflict_strategy = default_conflict_strategy
 
     def add(
         self,
@@ -58,6 +68,7 @@ class MemoryManager:
         user_id: str,
         metadata: dict[str, Any] | None = None,
         force: bool = False,
+        conflict_strategy: str | None = None,
     ) -> bool:
         """Store a memory, with conflict detection and sensitive filtering.
 
@@ -66,6 +77,8 @@ class MemoryManager:
             user_id: User identifier.
             metadata: Optional metadata.
             force: Skip conflict check if ``True``.
+            conflict_strategy: Override the default conflict strategy for this
+                call.  One of ``"skip"``, ``"replace"``, ``"merge"``.
 
         Returns:
             ``True`` if the memory was stored, ``False`` if filtered out.
@@ -76,11 +89,12 @@ class MemoryManager:
             return False
 
         # 2. Conflict detection
+        strategy = conflict_strategy or self.default_conflict_strategy
+
         if not force:
-            existing = self._find_conflicts(text, user_id)
-            if existing:
-                logger.info("Memory skipped: conflicts with existing '%s'.", existing[:50])
-                return False
+            conflict = self._find_conflict(text, user_id)
+            if conflict is not None:
+                return self._handle_conflict(text, conflict, user_id, metadata, strategy)
 
         # 3. Store
         self.backend.add(text, user_id=user_id, metadata=metadata)
@@ -146,7 +160,7 @@ class MemoryManager:
         logger.debug("Backend does not support decay — skipping.")
         return 0
 
-    def _find_conflicts(self, text: str, user_id: str) -> str | None:
+    def _find_conflict(self, text: str, user_id: str) -> str | None:
         """Check if a similar memory already exists.
 
         Returns the conflicting memory text, or ``None``.
@@ -160,6 +174,43 @@ class MemoryManager:
             pass
         return None
 
+    def _handle_conflict(
+        self,
+        new_text: str,
+        existing_text: str,
+        user_id: str,
+        metadata: dict[str, Any] | None,
+        strategy: str,
+    ) -> bool:
+        """Handle a conflict based on the chosen strategy.
+
+        Returns ``True`` if the new memory was ultimately stored.
+        """
+        if strategy == CONFLICT_REPLACE:
+            # Remove the old memory and store the new one
+            try:
+                self.backend.remove(existing_text, user_id)
+            except Exception as exc:
+                logger.warning("Failed to remove conflicting memory: %s", exc)
+            self.backend.add(new_text, user_id=user_id, metadata=metadata)
+            logger.info("Memory replaced: '%s' → '%s'.", existing_text[:40], new_text[:40])
+            return True
+
+        if strategy == CONFLICT_MERGE:
+            # Combine the two memories into one
+            merged = _merge_texts(existing_text, new_text)
+            try:
+                self.backend.remove(existing_text, user_id)
+            except Exception as exc:
+                logger.warning("Failed to remove old memory for merge: %s", exc)
+            self.backend.add(merged, user_id=user_id, metadata=metadata)
+            logger.info("Memory merged: '%s' + '%s'.", existing_text[:30], new_text[:30])
+            return True
+
+        # Default: skip
+        logger.info("Memory skipped: conflicts with existing '%s'.", existing_text[:50])
+        return False
+
 
 def _text_overlap(a: str, b: str) -> float:
     """Simple word-level Jaccard similarity between two strings."""
@@ -170,3 +221,17 @@ def _text_overlap(a: str, b: str) -> float:
     intersection = words_a & words_b
     union = words_a | words_b
     return len(intersection) / len(union)
+
+
+def _merge_texts(existing: str, new: str) -> str:
+    """Merge two memory texts into one.
+
+    Simple strategy: concatenate with a separator if they are different enough,
+    or take the longer one if they are nearly identical.
+    """
+    overlap = _text_overlap(existing, new)
+    if overlap > 0.9:
+        # Nearly identical — take the longer (presumably more detailed) one
+        return existing if len(existing) >= len(new) else new
+    # Different enough — concatenate
+    return f"{existing}; {new}"

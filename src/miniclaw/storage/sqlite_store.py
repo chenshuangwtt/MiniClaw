@@ -81,11 +81,13 @@ class SQLiteStore:
 
             CREATE TABLE IF NOT EXISTS memories (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                key         TEXT NOT NULL UNIQUE,
+                key         TEXT NOT NULL,
                 value       TEXT NOT NULL DEFAULT '',
+                user_id     TEXT NOT NULL DEFAULT 'default',
                 importance  INTEGER NOT NULL DEFAULT 1,
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(user_id, key)
             );
 
             CREATE TABLE IF NOT EXISTS traces (
@@ -184,7 +186,9 @@ class SQLiteStore:
     # Memories
     # ------------------------------------------------------------------
 
-    def save_memory(self, key: str, value: str, importance: int = 1) -> int:
+    def save_memory(
+        self, key: str, value: str, importance: int = 1, user_id: str = "default"
+    ) -> int:
         """Save or update a memory entry.
 
         If *key* already exists, the value and importance are updated.
@@ -193,6 +197,7 @@ class SQLiteStore:
             key: Unique key (e.g., ``"user:name"``).
             value: The value to store.
             importance: 1–10 scale for retrieval ranking.
+            user_id: User identifier.
 
         Returns:
             The memory's ``id``.
@@ -200,37 +205,54 @@ class SQLiteStore:
         conn = self._get_conn()
         now = _now()
         conn.execute(
-            "INSERT INTO memories (key, value, importance, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET "
+            "INSERT INTO memories (key, value, user_id, importance, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, key) DO UPDATE SET "
             "  value = excluded.value, "
             "  importance = excluded.importance, "
             "  updated_at = excluded.updated_at",
-            (key, value, importance, now, now),
+            (key, value, user_id, importance, now, now),
         )
         conn.commit()
         # Fetch the id (either newly inserted or existing)
-        row = conn.execute("SELECT id FROM memories WHERE key = ?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM memories WHERE user_id = ? AND key = ?",
+            (user_id, key),
+        ).fetchone()
         return row["id"]  # type: ignore[index]
 
-    def list_memories(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_memories(self, limit: int = 50, user_id: str | None = None) -> list[dict[str, Any]]:
         """Return all memories ordered by importance (desc), then by key.
 
         Args:
             limit: Maximum number of entries.
+            user_id: If provided, filter to this user's memories.
 
         Returns:
             List of memory dicts.
         """
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT id, key, value, importance, created_at, updated_at "
-            "FROM memories ORDER BY importance DESC, key ASC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT id, key, value, user_id, importance, created_at, updated_at "
+                "FROM memories WHERE user_id = ? "
+                "ORDER BY importance DESC, key ASC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, key, value, user_id, importance, created_at, updated_at "
+                "FROM memories ORDER BY importance DESC, key ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
-    def search_memories(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    def search_memories(
+        self,
+        query: str,
+        limit: int = 10,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Simple keyword search across memory keys and values.
 
         Uses ``LIKE %query%`` for substring matching (case-insensitive
@@ -239,20 +261,68 @@ class SQLiteStore:
         Args:
             query: Search term.
             limit: Maximum results.
+            user_id: If provided, filter to this user's memories.
 
         Returns:
             List of matching memory dicts.
         """
         conn = self._get_conn()
         pattern = f"%{query}%"
-        rows = conn.execute(
-            "SELECT id, key, value, importance, created_at, updated_at "
-            "FROM memories "
-            "WHERE key LIKE ? OR value LIKE ? "
-            "ORDER BY importance DESC, key ASC LIMIT ?",
-            (pattern, pattern, limit),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT id, key, value, user_id, importance, created_at, updated_at "
+                "FROM memories "
+                "WHERE user_id = ? AND (key LIKE ? OR value LIKE ?) "
+                "ORDER BY importance DESC, key ASC LIMIT ?",
+                (user_id, pattern, pattern, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, key, value, user_id, importance, created_at, updated_at "
+                "FROM memories "
+                "WHERE key LIKE ? OR value LIKE ? "
+                "ORDER BY importance DESC, key ASC LIMIT ?",
+                (pattern, pattern, limit),
+            ).fetchall()
         return [dict(row) for row in rows]
+
+    def decay(
+        self,
+        user_id: str = "default",
+        decay_factor: float = 0.95,
+        min_importance: int = 1,
+    ) -> int:
+        """Apply importance decay to all memories for *user_id*.
+
+        Reduces each memory's importance by ``decay_factor``.  Memories at
+        or below ``min_importance`` are left unchanged.
+
+        Args:
+            user_id: User identifier.
+            decay_factor: Multiplier applied to importance (0.0–1.0).
+            min_importance: Floor value — importance won't drop below this.
+
+        Returns:
+            Number of memories that were decayed.
+        """
+        conn = self._get_conn()
+        now = _now()
+        # Count affected rows first
+        count_row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM memories WHERE user_id = ? AND importance > ?",
+            (user_id, min_importance),
+        ).fetchone()
+        count = count_row["cnt"]  # type: ignore[index]
+
+        conn.execute(
+            "UPDATE memories "
+            "SET importance = MAX(?, CAST(importance * ? AS INTEGER)), "
+            "    updated_at = ? "
+            "WHERE user_id = ? AND importance > ?",
+            (min_importance, decay_factor, now, user_id, min_importance),
+        )
+        conn.commit()
+        return count
 
     # ------------------------------------------------------------------
     # Traces

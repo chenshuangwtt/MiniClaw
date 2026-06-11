@@ -15,6 +15,10 @@ class Tool(ABC):
         - ``schema``: JSON Schema describing the tool's input parameters.
         - ``run()``: executes the tool with given arguments and returns a result.
 
+    Optional attributes:
+        - ``timeout``: default timeout in seconds.  If ``None``, the tool
+          runs without a time limit (unless the caller imposes one).
+
     Example::
 
         class GetWeather(Tool):
@@ -35,6 +39,7 @@ class Tool(ABC):
     name: str
     description: str
     schema: dict[str, Any]
+    timeout: float | None = None
 
     @abstractmethod
     def run(self, **kwargs: Any) -> Any:

@@ -26,6 +26,8 @@ class VectorMemoryEntry:
     user_id: str
     vector: list[float]
     metadata: dict[str, Any] = field(default_factory=dict)
+    importance: float = 1.0
+    updated_at: float = field(default_factory=lambda: __import__("time").time())
 
 
 class VectorMemoryBackend(MemoryBackend):
@@ -92,6 +94,49 @@ class VectorMemoryBackend(MemoryBackend):
         if user_id is None:
             return list(self._entries)
         return [entry for entry in self._entries if entry.user_id == user_id]
+
+    def remove(self, text: str, user_id: str) -> bool:
+        """Remove a memory entry matching *text* for *user_id*.
+
+        Returns:
+            ``True`` if an entry was removed.
+        """
+        for i, entry in enumerate(self._entries):
+            if entry.user_id == user_id and entry.text == text:
+                self._entries.pop(i)
+                return True
+        return False
+
+    def decay(
+        self,
+        user_id: str,
+        decay_factor: float = 0.95,
+        min_importance: float = 0.1,
+    ) -> int:
+        """Apply importance decay to all memories for *user_id*.
+
+        Reduces each entry's importance by ``decay_factor``.  Entries at or
+        below ``min_importance`` are left unchanged.
+
+        Args:
+            user_id: User identifier.
+            decay_factor: Multiplier applied to importance (0.0–1.0).
+            min_importance: Floor value — importance won't drop below this.
+
+        Returns:
+            Number of entries that were decayed.
+        """
+        import time
+
+        count = 0
+        for entry in self._entries:
+            if entry.user_id != user_id:
+                continue
+            if entry.importance > min_importance:
+                entry.importance = max(min_importance, entry.importance * decay_factor)
+                entry.updated_at = time.time()
+                count += 1
+        return count
 
 
 def hash_embed(text: str, dimensions: int = 128) -> list[float]:

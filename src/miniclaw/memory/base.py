@@ -61,6 +61,21 @@ class MemoryBackend(ABC):
         """
         ...
 
+    def remove(self, text: str, user_id: str) -> bool:
+        """Remove a memory entry matching *text* for *user_id*.
+
+        This is an optional method — backends that don't support removal
+        can leave the default (returns ``False``).
+
+        Args:
+            text: The exact text to remove.
+            user_id: User identifier.
+
+        Returns:
+            ``True`` if a memory was removed, ``False`` otherwise.
+        """
+        return False
+
 
 class NullMemoryBackend(MemoryBackend):
     """No-op memory backend — does nothing, returns nothing.

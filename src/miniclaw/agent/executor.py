@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from miniclaw.tools.audit import AuditLogger
 from miniclaw.tools.permissions import PermissionPolicy
 from miniclaw.tools.registry import ToolRegistry
+from miniclaw.tools.timeout import CancellationToken, TimedOutError, run_with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +54,22 @@ class ToolExecutor:
         registry: ToolRegistry,
         permission_policy: PermissionPolicy | None = None,
         audit_logger: AuditLogger | None = None,
+        default_timeout: float | None = None,
     ) -> None:
         self._registry = registry
         self.permission_policy = permission_policy or PermissionPolicy()
         self.audit_logger = audit_logger
+        self.default_timeout = default_timeout
+        self._active_tokens: dict[str, CancellationToken] = {}
 
     def execute(self, tool_name: str, arguments: dict[str, Any]) -> Observation:
         """Execute a tool by name, returning a structured ``Observation``.
 
         This method **never raises**.  All errors are captured and returned
         inside the ``Observation``.
+
+        If the tool has a ``timeout`` attribute (or ``default_timeout`` is set),
+        the execution is wrapped with a wall-clock timeout.
 
         Args:
             tool_name: Name of the tool to invoke.
@@ -104,9 +111,17 @@ class ToolExecutor:
                 error=decision.reason,
             )
 
-        # 2. Execute
+        # 2. Execute (with optional timeout)
+        timeout = getattr(tool, "timeout", None) or self.default_timeout
+        token = CancellationToken()
+        self._active_tokens[tool_name] = token
+
         try:
-            result = tool.run(**arguments)
+            if timeout is not None:
+                result = run_with_timeout(tool.run, kwargs=arguments, timeout=timeout, token=token)
+            else:
+                result = tool.run(**arguments)
+
             if self.audit_logger is not None:
                 self.audit_logger.log(
                     tool_name,
@@ -119,6 +134,22 @@ class ToolExecutor:
                 tool_name=tool_name,
                 success=True,
                 output=result,
+            )
+        except TimedOutError:
+            error = f"Tool '{tool_name}' timed out after {timeout}s"
+            logger.warning(error)
+            if self.audit_logger is not None:
+                self.audit_logger.log(
+                    tool_name,
+                    arguments,
+                    allowed=True,
+                    success=False,
+                    error=error,
+                )
+            return Observation(
+                tool_name=tool_name,
+                success=False,
+                error=error,
             )
         except Exception as exc:
             logger.exception("Tool '%s' raised an exception", tool_name)
@@ -136,6 +167,23 @@ class ToolExecutor:
                 success=False,
                 error=error,
             )
+        finally:
+            self._active_tokens.pop(tool_name, None)
+
+    def cancel_execution(self, tool_name: str) -> bool:
+        """Request cancellation of a running tool.
+
+        Args:
+            tool_name: Name of the tool to cancel.
+
+        Returns:
+            ``True`` if a cancellation token was found and cancelled.
+        """
+        token = self._active_tokens.get(tool_name)
+        if token is not None:
+            token.cancel()
+            return True
+        return False
 
     def execute_tool_call(self, tool_call: Any) -> Observation:
         """Convenience: accept a ``ToolCall`` pydantic model directly.

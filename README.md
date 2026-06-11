@@ -16,7 +16,7 @@ The hard part is not the model — it's everything around it:
 - **How do you stay within the context window?** → Context Compression
 - **How do you persist knowledge across sessions?** → SQLite Memory
 
-MiniClaw implements each of these as a discrete, testable module. The result is a minimal but complete agent runtime that runs on a single machine, needs no external services beyond an LLM endpoint, and passes 490+ unit tests.
+MiniClaw implements each of these as a discrete, testable module. The result is a minimal but complete agent runtime that runs on a single machine, needs no external services beyond an LLM endpoint, and passes 660+ unit tests.
 
 ## Entry Points
 
@@ -25,18 +25,25 @@ MiniClaw implements each of these as a discrete, testable module. The result is 
 
 The canonical CLI lives in `src/miniclaw/cli.py`. The root `main.py` only forwards to that package entry point so both commands exercise the same runtime.
 
-## v0.4 Optional Extensions
+## v0.4 Runtime Hardening
 
 - `miniclaw doctor` checks the local Python, config, API key, optional packages, and database directory.
 - `miniclaw trace summary` aggregates stored traces by step count, result, errors, and tool usage.
 - `miniclaw trace replay` replays a stored session step by step for debugging.
+- `miniclaw trace html` exports a self-contained HTML report with a Mermaid trace timeline.
 - Built-in file tools can enforce a workspace boundary. The CLI registers file tools with `Path.cwd()` as the allowed root.
 - `PermissionPolicy` gates file writes and shell commands, and `AuditLogger` records tool execution decisions.
 - `MINICLAW_*` environment variables can override config values without editing `miniclaw.toml`.
 - `web_search` is available behind explicit `allow_search` permission.
 - `BaseLLM.stream()` formalizes streaming output; `OpenAIClient` implements OpenAI-compatible token streaming.
+- `ToolExecutor` supports wall-clock tool timeouts and cooperative cancellation.
+- `SandboxExecutor` adds restricted shell execution with command blocklists, environment sanitization, and path boundaries.
 - `VectorMemoryBackend` provides optional dependency-free semantic retrieval for demos and tests.
-- GitHub Actions runs lint, format checks, and tests across supported Python versions.
+- `CompositeMemoryBackend` combines two memory backends and supports conflict-safe replace/merge flows.
+- `LLMMemoryExtractor` can use an LLM for semantic memory extraction while preserving sensitive-data filtering.
+- `OpenAPIToolRegistry` can generate tools from JSON/YAML OpenAPI specs.
+- `MCPToolRegistry` provides a minimal stdio MCP adapter for wrapping MCP tools.
+- GitHub Actions runs lint, format checks, and tests on Python 3.11.
 - Legacy top-level modules such as `miniclaw.agent_loop` remain for older demos; new code should prefer the package layout under `miniclaw.agent`, `miniclaw.tools`, `miniclaw.storage`, and `miniclaw.memory`.
 
 ## Architecture
@@ -261,7 +268,7 @@ Memory search failures never crash the agent. Memory add failures are silently l
 
 ```bash
 # Install dependencies
-uv pip install -e ".[dev]"
+uv sync --extra dev
 
 # Run with FakeLLM (no API key needed)
 uv run miniclaw run "list files in current directory"
@@ -279,6 +286,9 @@ uv run miniclaw trace list
 
 # Export trace as structured JSON
 uv run miniclaw trace export --session 1 -o trace.json
+
+# Export trace as HTML
+uv run miniclaw trace html --session 1 -o trace_report.html
 
 # Demo: context compression
 uv run miniclaw demo context-compression
@@ -355,7 +365,7 @@ uv run pytest tests/test_agent_loop.py -v
 ```
 
 ```text
-============================ 466 passed in ... ============================
+======================= 662 passed, 1 skipped in ... =======================
 ```
 
 Pytest is configured to use `.test-tmp` as its base temp directory. If Windows leaves a stale ACL on that folder, delete it and rerun `uv run pytest`.
@@ -376,13 +386,14 @@ MiniClaw/
 │   │
 │   ├── agent/                       # Core agent runtime
 │   │   ├── loop.py                  # AgentLoop — core while-loop
+│   │   ├── async_loop.py            # AsyncAgentLoop variant
 │   │   ├── state.py                 # Pydantic models: ToolCall, FinalAnswer
 │   │   ├── parser.py                # JSON parser with validation
 │   │   ├── executor.py              # ToolExecutor + Observation
 │   │   ├── prompts.py               # Prompt builder (system + tools + task + memory)
 │   │   ├── context.py               # ContextManager with compression
 │   │   ├── recovery.py              # RecoveryManager (5 recovery strategies)
-│   │   ├── trace.py                 # StepTrace + TraceLogger
+│   │   ├── trace.py                 # StepTrace + TraceLogger, Mermaid/HTML export
 │   │   └── config.py                # TOML config loader
 │   │
 │   ├── tools/                       # Tool system
@@ -393,7 +404,11 @@ MiniClaw/
 │   │   ├── search_tool.py           # web_search (permission-gated)
 │   │   ├── permissions.py           # PermissionPolicy (default-deny)
 │   │   ├── audit.py                 # AuditLogger for tool execution
-│   │   └── security.py              # Workspace path resolution
+│   │   ├── security.py              # Workspace path resolution
+│   │   ├── timeout.py               # Tool timeout/cancellation helpers
+│   │   ├── sandbox.py               # Restricted shell execution mode
+│   │   ├── openapi_adapter.py       # OpenAPI spec -> tools adapter
+│   │   └── mcp_adapter.py           # Minimal stdio MCP adapter
 │   │
 │   ├── llm/                         # LLM abstraction layer
 │   │   ├── base.py                  # BaseLLM abstract interface
@@ -403,7 +418,9 @@ MiniClaw/
 │   │
 │   ├── memory/                      # Memory abstraction
 │   │   ├── base.py                  # MemoryBackend + NullMemoryBackend
-│   │   ├── extractor.py             # MemoryExtractor (keyword-based)
+│   │   ├── extractor.py             # Keyword/LLM memory extractors
+│   │   ├── manager.py               # Conflict resolution and decay coordinator
+│   │   ├── composite.py             # Composite backend
 │   │   ├── mem0_store.py            # Mem0MemoryBackend (semantic search)
 │   │   └── vector.py                # VectorMemoryBackend (in-memory)
 │   │
@@ -415,7 +432,7 @@ MiniClaw/
 │       ├── agents.py                # PlannerAgent, CoderAgent, ReviewerAgent
 │       └── coordinator.py           # Coordinator (sequential pipeline)
 │
-└── tests/                           # 490+ tests across 25 files
+└── tests/                           # 660+ tests across the runtime
 ```
 
 ## Resume Highlights
@@ -424,7 +441,7 @@ MiniClaw/
 
 - **Built a structured tool-calling protocol** with Pydantic-validated JSON schemas, a registry pattern for tool discovery, and a recovery manager that transforms malformed LLM output, unknown tool calls, and execution failures into self-correcting feedback loops.
 
-- **Engineered context management and memory persistence** using a sliding-window compression strategy with rule-based summarization, SQLite-backed storage, optional vector retrieval, and execution traces — achieving 490+ passing unit tests across all modules.
+- **Engineered context management and memory persistence** using a sliding-window compression strategy with rule-based summarization, SQLite-backed storage, optional vector retrieval, trace replay/export, and 660+ passing unit tests across the runtime.
 
 - **Extended with Mem0-based long-term semantic memory** — injects user preferences and project facts into context before each task, extracts high-value memories after completion, and decouples short-term execution state (SQLite) from long-term user knowledge (Mem0) via pluggable MemoryBackend abstraction.
 

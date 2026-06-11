@@ -166,6 +166,17 @@ class TestMemories:
             assert mems[0]["value"] == "v2"
             assert mems[0]["importance"] == 9
 
+    def test_same_key_is_isolated_by_user_id(self):
+        with SQLiteStore(":memory:") as store:
+            alice_id = store.save_memory("pref:theme", "dark", user_id="alice")
+            bob_id = store.save_memory("pref:theme", "light", user_id="bob")
+
+            assert alice_id != bob_id
+            alice_mems = store.list_memories(user_id="alice")
+            bob_mems = store.list_memories(user_id="bob")
+            assert alice_mems[0]["value"] == "dark"
+            assert bob_mems[0]["value"] == "light"
+
     def test_default_importance(self):
         with SQLiteStore(":memory:") as store:
             store.save_memory("k", "v")
@@ -234,6 +245,16 @@ class TestSearchMemories:
             results = store.search_memories("findme")
             importances = [r["importance"] for r in results]
             assert importances == [10, 5, 1]
+
+    def test_search_can_filter_by_user_id(self):
+        with SQLiteStore(":memory:") as store:
+            store.save_memory("pref:theme", "dark", user_id="alice")
+            store.save_memory("pref:theme", "light", user_id="bob")
+
+            results = store.search_memories("pref", user_id="alice")
+            assert len(results) == 1
+            assert results[0]["user_id"] == "alice"
+            assert results[0]["value"] == "dark"
 
 
 # ============================================================

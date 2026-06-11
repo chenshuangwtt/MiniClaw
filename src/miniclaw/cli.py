@@ -132,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
     mermaid_p.add_argument(
         "--output", "-o", default=None, help="Output file path (default: stdout)."
     )
+    html_p = trace_sub.add_parser("html", help="Export trace as HTML report.")
+    html_p.add_argument("--session", type=int, default=None, help="Session ID (default: latest).")
+    html_p.add_argument(
+        "--output", "-o", default=None, help="Output file path (default: trace_report.html)."
+    )
 
     # --- demo ---
     demo_p = sub.add_parser("demo", help="Run built-in demos.")
@@ -539,12 +544,52 @@ def _cmd_trace(args: argparse.Namespace, config) -> None:
             else:
                 print(mermaid)
 
+    elif args.trace_action == "html":
+        with SQLiteStore(config.storage.db_path) as store:
+            session_id = _resolve_session_id(store, args.session)
+            if session_id is None:
+                return
+
+            conn = store._get_conn()
+            session_row = conn.execute(
+                "SELECT title FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            title = session_row["title"] if session_row else f"Session #{session_id}"
+
+            traces = store.list_traces(session_id)
+            if not traces:
+                print(f"No traces for session #{session_id}.")
+                return
+
+            from miniclaw.agent.trace import TraceLogger
+
+            trace = TraceLogger()
+            for t in traces:
+                try:
+                    event = json.loads(t["event_json"])
+                except (json.JSONDecodeError, KeyError):
+                    event = {}
+                trace.log_step(
+                    step=t["step"],
+                    model_output=event.get("model_output", ""),
+                    parsed_action=event.get("parsed_action", ""),
+                    tool_name=event.get("tool_name"),
+                    arguments=event.get("arguments"),
+                    observation=event.get("observation"),
+                    error=event.get("error"),
+                )
+
+            output_path = args.output or "trace_report.html"
+            trace.export_html(output_path, title=title)
+            print(f"HTML report saved to {output_path}")
+
     else:
         print("Usage: miniclaw trace list")
         print("       miniclaw trace summary [--session N]")
         print("       miniclaw trace replay [--session N]")
         print("       miniclaw trace export [--session N] [-o file.json]")
         print("       miniclaw trace mermaid [--session N] [-o file.md]")
+        print("       miniclaw trace html [--session N] [-o file.html]")
 
 
 def _cmd_doctor(config) -> None:
