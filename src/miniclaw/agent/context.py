@@ -21,6 +21,7 @@ MessageRole = Literal["system", "user", "assistant", "tool", "summary"]
 # Default token budget
 DEFAULT_MAX_CONTEXT_TOKENS = 8000
 DEFAULT_RECENT_KEEP = 6
+DEFAULT_MAX_TOOL_RESULT_CHARS = 8000
 
 
 class ContextManager:
@@ -51,11 +52,13 @@ class ContextManager:
         max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
         recent_keep: int = DEFAULT_RECENT_KEEP,
         summarizer: Callable[[list[dict[str, Any]]], str] | None = None,
+        max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS,
     ) -> None:
         self.max_context_tokens = max_context_tokens
         self.recent_keep = recent_keep
         self._messages: list[dict[str, Any]] = []
         self._summarizer = summarizer or _rule_based_summarizer
+        self.max_tool_result_chars = max_tool_result_chars
 
     # ------------------------------------------------------------------
     # Message management
@@ -91,7 +94,8 @@ class ContextManager:
             tool_name=tool_name,
             arguments=arguments,
         )
-        self.add_message("tool", str(observation), tool_name=tool_name)
+        content = _bounded_tool_result(observation, self.max_tool_result_chars)
+        self.add_message("tool", content, tool_name=tool_name)
 
     def get_messages(self) -> list[dict[str, Any]]:
         """Return a shallow copy of all stored messages."""
@@ -100,6 +104,10 @@ class ContextManager:
     def clear(self) -> None:
         """Remove all messages."""
         self._messages.clear()
+
+    def restore(self, messages: list[dict[str, Any]]) -> None:
+        """Replace context with a validated checkpoint snapshot."""
+        self._messages = [dict(message) for message in messages if "role" in message]
 
     @property
     def message_count(self) -> int:
@@ -162,9 +170,11 @@ class ContextManager:
             self._messages = system_msgs + rest
             return False
 
-        # Split into old (compressible) and recent (pinned)
-        old = rest[: -self.recent_keep]
-        recent = rest[-self.recent_keep :]
+        # Preserve explicit constraints independently from the recent tail.
+        pinned = [message for message in rest if message.get("important")]
+        unpinned = [message for message in rest if not message.get("important")]
+        recent = unpinned[-self.recent_keep :]
+        old = unpinned[: -self.recent_keep]
 
         # Generate summary
         summary_text = self._summarizer(old)
@@ -173,6 +183,7 @@ class ContextManager:
         compressed: list[dict[str, Any]] = list(system_msgs)
         if summary_text:
             compressed.append({"role": "summary", "content": summary_text})
+        compressed.extend(pinned)
         compressed.extend(recent)
 
         self._messages = compressed
@@ -291,3 +302,14 @@ def _rule_based_summarizer(messages: list[dict[str, Any]]) -> str:
         parts.append(f"Last assistant: {last_assistant}")
 
     return "\n".join(parts)
+
+
+def _bounded_tool_result(observation: Any, limit: int) -> str:
+    """Serialize a tool result without allowing one result to consume context."""
+    content = str(observation)
+    if limit <= 0 or len(content) <= limit:
+        return content
+    head = max(limit * 3 // 4, 1)
+    tail = max(limit - head, 1)
+    omitted = len(content) - head - tail
+    return f"{content[:head]}\n...[truncated {omitted} chars]...\n{content[-tail:]}"

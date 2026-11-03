@@ -26,6 +26,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +53,10 @@ class SQLiteStore:
         """Open the database connection and initialize tables."""
         if self._db_path != ":memory:":
             Path(self._db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path)
+        # The engine performs backend operations through ``asyncio.to_thread``.
+        # SQLite remains process-local, but this permits that one connection to
+        # serve the sequential worker calls used by the lightweight runtime.
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -97,6 +101,40 @@ class SQLiteStore:
                 event_json  TEXT NOT NULL DEFAULT '{}',
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS runs (
+                id          TEXT PRIMARY KEY,
+                session_id  INTEGER,
+                task        TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                error       TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id      TEXT NOT NULL,
+                sequence    INTEGER NOT NULL,
+                state_json  TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(run_id, sequence),
+                FOREIGN KEY (run_id) REFERENCES runs(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_memories (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       TEXT NOT NULL,
+                project_id    TEXT NOT NULL,
+                memory_key    TEXT NOT NULL,
+                content       TEXT NOT NULL,
+                source        TEXT NOT NULL DEFAULT 'agent',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(user_id, project_id, memory_key)
             );
         """)
         conn.commit()
@@ -181,6 +219,172 @@ class SQLiteStore:
             (session_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Durable agent runs and checkpoints
+    # ------------------------------------------------------------------
+
+    def create_run(self, run_id: str, task: str, session_id: int | None = None) -> None:
+        """Create a durable agent run in the ``created`` state."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO runs (id, session_id, task, status) VALUES (?, ?, ?, 'created')",
+            (run_id, session_id, task),
+        )
+        conn.commit()
+
+    def update_run(self, run_id: str, status: str, error: str | None = None) -> None:
+        """Persist a lifecycle transition for an existing run."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE runs SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+            (status, error, _now(), run_id),
+        )
+        conn.commit()
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """Return one durable run, or ``None`` when it does not exist."""
+        row = (
+            self._get_conn()
+            .execute(
+                "SELECT id, session_id, task, status, error, created_at, updated_at "
+                "FROM runs WHERE id = ?",
+                (run_id,),
+            )
+            .fetchone()
+        )
+        return dict(row) if row else None
+
+    def list_runs(self, session_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """List recent durable runs, optionally scoped to a session."""
+        conn = self._get_conn()
+        if session_id is None:
+            rows = conn.execute(
+                "SELECT id, session_id, task, status, error, created_at, updated_at "
+                "FROM runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, session_id, task, status, error, created_at, updated_at "
+                "FROM runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_checkpoint(self, run_id: str, sequence: int, state: dict[str, Any]) -> None:
+        """Atomically store a JSON-serializable recovery checkpoint."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO checkpoints (run_id, sequence, state_json) VALUES (?, ?, ?) "
+            "ON CONFLICT(run_id, sequence) DO UPDATE SET state_json = excluded.state_json",
+            (run_id, sequence, json.dumps(state, ensure_ascii=False, default=str)),
+        )
+        conn.commit()
+
+    def get_latest_checkpoint(self, run_id: str) -> dict[str, Any] | None:
+        """Return the latest checkpoint decoded from JSON."""
+        row = (
+            self._get_conn()
+            .execute(
+                "SELECT sequence, state_json, created_at FROM checkpoints "
+                "WHERE run_id = ? ORDER BY sequence DESC LIMIT 1",
+                (run_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        return {
+            "sequence": row["sequence"],
+            "state": json.loads(row["state_json"]),
+            "created_at": row["created_at"],
+        }
+
+    # ------------------------------------------------------------------
+    # Scoped long-term agent memories
+    # ------------------------------------------------------------------
+
+    def upsert_agent_memory(
+        self,
+        user_id: str,
+        project_id: str,
+        memory_key: str,
+        content: str,
+        source: str = "agent",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Create or update a memory isolated by user and project."""
+        conn = self._get_conn()
+        now = _now()
+        conn.execute(
+            "INSERT INTO agent_memories "
+            "(user_id, project_id, memory_key, content, source, metadata_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, project_id, memory_key) DO UPDATE SET "
+            "content = excluded.content, source = excluded.source, "
+            "metadata_json = excluded.metadata_json, updated_at = excluded.updated_at",
+            (
+                user_id,
+                project_id,
+                memory_key,
+                content,
+                source,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+    def search_agent_memories(
+        self, query: str, user_id: str, project_id: str, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """Search scoped memories using a deterministic SQLite substring match."""
+        pattern = f"%{query}%"
+        rows = (
+            self._get_conn()
+            .execute(
+                "SELECT id, memory_key, content, source, metadata_json, created_at, updated_at "
+                "FROM agent_memories WHERE user_id = ? AND project_id = ? "
+                "AND (content LIKE ? OR memory_key LIKE ?) "
+                "ORDER BY updated_at DESC, id DESC LIMIT ?",
+                (user_id, project_id, pattern, pattern, limit),
+            )
+            .fetchall()
+        )
+        return [
+            {
+                **dict(row),
+                "metadata": json.loads(row["metadata_json"]),
+            }
+            for row in rows
+        ]
+
+    def remove_agent_memory(self, user_id: str, project_id: str, content: str) -> bool:
+        """Remove an exact scoped memory and report whether it existed."""
+        cur = self._get_conn().execute(
+            "DELETE FROM agent_memories WHERE user_id = ? AND project_id = ? AND content = ?",
+            (user_id, project_id, content),
+        )
+        self._get_conn().commit()
+        return cur.rowcount > 0
+
+    def list_agent_memories(
+        self, user_id: str, project_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """List scoped agent memories newest first for local inspection."""
+        rows = (
+            self._get_conn()
+            .execute(
+                "SELECT id, memory_key, content, source, metadata_json, created_at, updated_at "
+                "FROM agent_memories WHERE user_id = ? AND project_id = ? "
+                "ORDER BY updated_at DESC, id DESC LIMIT ?",
+                (user_id, project_id, limit),
+            )
+            .fetchall()
+        )
+        return [{**dict(row), "metadata": json.loads(row["metadata_json"])} for row in rows]
 
     # ------------------------------------------------------------------
     # Memories

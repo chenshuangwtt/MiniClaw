@@ -16,7 +16,7 @@ MiniClaw 实现了 LLM 外围的完整运行时层：Agent 主循环、工具调
 - **如何在有限的上下文窗口内工作？** → Context Compression
 - **如何跨会话持久化知识？** → SQLite Memory
 
-MiniClaw 将以上每个问题实现为独立、可测试的模块。整个系统运行在单机上，除 LLM 端点外不依赖任何外部服务，通过 660+ 项单元测试。
+MiniClaw 将以上每个问题实现为独立、可测试的模块。整个系统运行在单机上，除 LLM 端点外不依赖任何外部服务，并由离线优先的单元测试集验证。
 
 ## 入口说明
 
@@ -24,6 +24,15 @@ MiniClaw 将以上每个问题实现为独立、可测试的模块。整个系�
 - `uv run python main.py ...`：源码目录下的兼容入口，方便本地 demo。
 
 标准 CLI 入口是 `src/miniclaw/cli.py`。根目录 `main.py` 只做转发，因此两种命令会走同一套运行时。
+
+## v1.0 运行时
+
+- 同步 `AgentLoop` 与异步 `AsyncAgentLoop` 统一委托给 async-first 的 `AgentEngine`；运行状态为 `created`、`running`、`waiting_approval`、`completed`、`failed`、`cancelled`。
+- OpenAI 兼容的原生 Tool Calling 会执行一次响应中的全部工具调用，并保留 `tool_call_id` 关联；仍可通过 `--mode portable` 使用便携 JSON 协议。
+- 执行器会在调用前校验 JSON Schema 参数，返回结构化失败；工具报错和非零 Shell 退出码不会被记成成功。
+- 每个工具都有能力类别：只读、文件写入、Shell、网络、外部副作用；敏感能力默认拒绝，必须显式开启。
+- SQLite 除会话、消息、记忆与 trace 外，还保存运行记录和恢复检查点。trace replay 只复盘，不会重新执行工具。
+- `examples/demo_repository_maintenance.py` 提供完整离线维护演示：FakeLLM、临时工作区、显式写入/Shell 授权和真实测试命令。
 
 ## v0.4 运行时强化
 
@@ -196,7 +205,9 @@ ctx = ContextManager(summarizer=llm_summarizer)
 | `sessions` | 每次对话一个会话 |
 | `messages` | 每个会话的完整消息历史 |
 | `memories` | 带重要度排序的键值对长期记忆 |
+| `agent_memories` | 按用户与项目隔离的运行时长期记忆 |
 | `traces` | 逐步事件日志，用于调试 |
+| `runs` / `checkpoints` | 可恢复的生命周期与检查点状态 |
 
 ```python
 with SQLiteStore(".miniclaw/miniclaw.db") as store:
@@ -206,28 +217,22 @@ with SQLiteStore(".miniclaw/miniclaw.db") as store:
     results = store.search_memories("beijing")
 ```
 
-## 长期记忆：Mem0 集成
+## 长期记忆
 
 LLM API 本身是无状态的——每次请求都从零开始。Agent Harness 需要一个外部记忆层来跨会话携带知识。
 
-MiniClaw 使用**两套存储系统**，各司其职：
+`--memory` 使用内置 SQLite 记忆后端，记录来源和 metadata，并按用户与当前工作区隔离。它采用轻量、确定性的检索，不需要额外的向量数据库。`Mem0MemoryBackend` 仍可供应用代码选用，但不再是 Agent 运行时默认路径。
 
 | 层 | 存储内容 | 引擎 |
 | --- | --- | --- |
-| **SQLite** | sessions、messages、traces — 结构化执行日志 | `sqlite3`（标准库） |
-| **Mem0** | 用户偏好、项目事实、长期自然语言记忆 | `mem0ai`（语义检索） |
+| **SQLite** | sessions、messages、traces、runs、checkpoints、隔离记忆 | `sqlite3`（标准库） |
+| **Mem0** | 可选的外部语义记忆适配器 | `mem0ai` |
 
-> **SQLite 记录发生了什么；Mem0 记住什么将来有用。**
+> **默认 SQLite 后端同时记录执行过程，以及对后续任务有用的选择性隔离记忆。**
 
 ### 使用方式
 
 ```bash
-# 保存记忆
-uv run miniclaw memory add "用户偏好中文解释 Agent 底层流程" --user-id michael
-
-# 搜索记忆
-uv run miniclaw memory search "用户喜欢什么回答风格？" --user-id michael
-
 # 启用记忆运行
 uv run miniclaw run "讲一下 RecoveryManager" --user-id michael --memory
 
@@ -241,7 +246,7 @@ uv run miniclaw run "task" --no-memory
 User Task
     │
     ▼
-Memory Search ─── mem0.search(task, user_id) → 相关记忆
+Memory Search ─── SQLiteMemoryBackend.search(task, user_id) → 相关记忆
     │
     ▼
 Memory Injection ─── "## Long-Term Memory\n- 用户偏好中文解释..."
@@ -259,7 +264,7 @@ Final Answer
 Memory Extraction ─── MemoryExtractor.should_remember(task)?
     │
     ▼
-Memory Add ─── mem0.add(extracted_text, user_id)
+Memory Add ─── MemoryManager.add(extracted_text, user_id, source="agent")
 ```
 
 记忆搜索失败不会导致 Agent 崩溃。记忆保存失败会被静默记录。
@@ -326,7 +331,7 @@ MINICLAW_SHELL_ALLOWED_PREFIXES=echo,python -m pytest
 ```text
 $ uv run miniclaw run -v "列出当前目录并总结项目结构"
 
-🐾 MiniClaw v0.4.0 — session #1
+🐾 MiniClaw v1.0.0 — session #1
 📋 Task: 列出当前目录并总结项目结构
 
 ✅ Answer (5 steps):

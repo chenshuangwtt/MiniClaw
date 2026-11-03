@@ -4,7 +4,6 @@ from argparse import Namespace
 from contextlib import suppress
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -40,6 +39,13 @@ class TestParser:
         assert args.task == "hello"
         assert args.llm is None  # None means "use config default"
         assert args.max_steps is None
+
+    def test_resume_command(self):
+        parser = build_parser()
+        args = parser.parse_args(["resume", "run-123", "--approve-pending"])
+        assert args.command == "resume"
+        assert args.run_id == "run-123"
+        assert args.approve_pending is True
 
     def test_run_with_openai(self):
         parser = build_parser()
@@ -140,12 +146,11 @@ class TestRunCommand:
         captured = capsys.readouterr()
         assert "MiniClaw" in captured.out
 
-    def test_run_stream_does_not_call_llm_again(self, tmp_path, capsys):
+    def test_run_mode_override(self, tmp_path, capsys):
         db = tmp_path / "test.db"
-        main(["--db", str(db), "run", "--stream", "test task"])
+        main(["--db", str(db), "run", "--mode", "portable", "test task"])
         captured = capsys.readouterr()
-        assert "[FakeLLM] No more scripted responses" not in captured.out
-        assert "项目结构分析" in captured.out
+        assert "MiniClaw" in captured.out
 
 
 # ============================================================
@@ -239,8 +244,9 @@ class TestMemoryCommand:
 
         db = tmp_path / "test.db"
         with SQLiteStore(db) as store:
-            store.save_memory("user:name", "Alice", importance=5)
-            store.save_memory("user:city", "Beijing", importance=3)
+            project_id = str(Path.cwd().resolve())
+            store.upsert_agent_memory("default", project_id, "name", "Alice")
+            store.upsert_agent_memory("default", project_id, "city", "Beijing")
 
         main(["--db", str(db), "memory", "list"])
         captured = capsys.readouterr()
@@ -254,40 +260,35 @@ class TestMemoryCommand:
         captured = capsys.readouterr()
         assert "Usage" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_memory_add(self, mock_create, capsys):
-        mock_backend = MagicMock()
-        mock_create.return_value = mock_backend
-        main(["memory", "add", "记住我喜欢咖啡", "--user-id", "alice"])
-        mock_backend.add.assert_called_once_with("记住我喜欢咖啡", user_id="alice")
+    def test_memory_add(self, tmp_path, capsys):
+        db = tmp_path / "test.db"
+        main(["--db", str(db), "memory", "add", "记住我喜欢咖啡", "--user-id", "alice"])
         captured = capsys.readouterr()
         assert "saved" in captured.out.lower() or "alice" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_memory_search(self, mock_create, capsys):
-        mock_backend = MagicMock()
-        mock_backend.search.return_value = ["Alice likes coffee", "Alice prefers Python"]
-        mock_create.return_value = mock_backend
-        main(["memory", "search", "Alice", "--user-id", "alice"])
-        mock_backend.search.assert_called_once_with("Alice", user_id="alice", limit=5)
+    def test_memory_search(self, tmp_path, capsys):
+        from miniclaw.storage.sqlite_store import SQLiteStore
+
+        db = tmp_path / "test.db"
+        with SQLiteStore(db) as store:
+            project_id = str(Path.cwd().resolve())
+            store.upsert_agent_memory("alice", project_id, "alice-1", "Alice likes coffee")
+            store.upsert_agent_memory("alice", project_id, "alice-2", "Alice prefers Python")
+        main(["--db", str(db), "memory", "search", "Alice", "--user-id", "alice"])
         captured = capsys.readouterr()
         assert "Alice likes coffee" in captured.out
         assert "Alice prefers Python" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_memory_search_no_results(self, mock_create, capsys):
-        mock_backend = MagicMock()
-        mock_backend.search.return_value = []
-        mock_create.return_value = mock_backend
-        main(["memory", "search", "nothing", "--user-id", "alice"])
+    def test_memory_search_no_results(self, tmp_path, capsys):
+        main(
+            ["--db", str(tmp_path / "test.db"), "memory", "search", "nothing", "--user-id", "alice"]
+        )
         captured = capsys.readouterr()
         assert "No memories found" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_memory_add_backend_unavailable(self, mock_create, capsys):
-        """When backend is None, the command exits cleanly without crashing."""
-        mock_create.return_value = None
-        main(["memory", "add", "test"])  # Should not raise
+    def test_memory_add_sensitive_value_is_filtered(self, tmp_path, capsys):
+        main(["--db", str(tmp_path / "test.db"), "memory", "add", "token=secret-value"])
+        assert "not saved" in capsys.readouterr().out
 
 
 class TestRunMemoryFlags:
@@ -320,24 +321,26 @@ class TestRunMemoryFlags:
         captured = capsys.readouterr()
         assert "memory=off" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_run_with_memory(self, mock_create, tmp_path, capsys):
-        """--memory should try to create Mem0 backend."""
-        mock_backend = MagicMock()
-        mock_backend.search.return_value = ["user likes Python"]
-        mock_create.return_value = mock_backend
+    def test_run_with_memory(self, tmp_path, capsys):
+        """--memory enables the lightweight SQLite-backed runtime backend."""
         db = tmp_path / "test.db"
         main(["--db", str(db), "run", "--memory", "-v", "test task"])
         captured = capsys.readouterr()
-        assert "memory=Mem0" in captured.out
+        assert "memory=SQLite" in captured.out
 
-    @patch("miniclaw.cli._create_mem0_backend")
-    def test_run_memory_verbose_shows_injected(self, mock_create, tmp_path, capsys):
+    def test_run_memory_verbose_shows_injected(self, tmp_path, capsys):
         """-v --memory should show injected memories."""
-        mock_backend = MagicMock()
-        mock_backend.search.return_value = ["Alice likes coffee", "Alice prefers Python"]
-        mock_create.return_value = mock_backend
+        from miniclaw.memory.sqlite_backend import SQLiteMemoryBackend
+        from miniclaw.storage.sqlite_store import SQLiteStore
+
         db = tmp_path / "test.db"
+        with SQLiteStore(db) as store:
+            SQLiteMemoryBackend(store, project_id=str(Path.cwd().resolve())).add(
+                "Alice likes coffee", "default", {"key": "analyze-coffee"}
+            )
+            SQLiteMemoryBackend(store, project_id=str(Path.cwd().resolve())).add(
+                "Alice prefers Python", "default", {"key": "analyze-python"}
+            )
         main(["--db", str(db), "run", "--memory", "-v", "analyze code"])
         captured = capsys.readouterr()
         assert "Injected 2 memories" in captured.out

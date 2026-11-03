@@ -16,28 +16,36 @@ from miniclaw.tools.registry import ToolRegistry
 from miniclaw.tools.shell_tool import RunShell
 
 # --- 构建 FakeLLM（故意第一次用错工具名） ---
-llm = FakeLLM([
-    # Step 1: 故意使用不存在的工具名
-    json.dumps({
-        "type": "tool_call",
-        "thought": "我需要读取文件内容。",
-        "tool_name": "open_file",       # ← 不存在！
-        "arguments": {"path": "README.md"}
-    }),
-    # Step 2: 收到恢复提示后，修正为正确的工具名
-    json.dumps({
-        "type": "tool_call",
-        "thought": "抱歉，工具名应该是 read_file，我来修正。",
-        "tool_name": "read_file",       # ← 修正后
-        "arguments": {"path": "README.md"}
-    }),
-    # Step 3: 最终回答
-    json.dumps({
-        "type": "final_answer",
-        "thought": "文件读取成功。",
-        "answer": "成功读取 README.md。项目是一个从零实现的轻量级 Agent Harness，不依赖 LangChain/AutoGen/CrewAI。"
-    }),
-])
+llm = FakeLLM(
+    [
+        # Step 1: 故意使用不存在的工具名
+        json.dumps(
+            {
+                "type": "tool_call",
+                "thought": "我需要读取文件内容。",
+                "tool_name": "open_file",  # ← 不存在！
+                "arguments": {"path": "README.md"},
+            }
+        ),
+        # Step 2: 收到恢复提示后，修正为正确的工具名
+        json.dumps(
+            {
+                "type": "tool_call",
+                "thought": "抱歉，工具名应该是 read_file，我来修正。",
+                "tool_name": "read_file",  # ← 修正后
+                "arguments": {"path": "README.md"},
+            }
+        ),
+        # Step 3: 最终回答
+        json.dumps(
+            {
+                "type": "final_answer",
+                "thought": "文件读取成功。",
+                "answer": "成功读取 README.md。项目是一个从零实现的轻量级 Agent Harness，不依赖 LangChain/AutoGen/CrewAI。",
+            }
+        ),
+    ]
+)
 
 # --- 注册工具 ---
 registry = ToolRegistry()

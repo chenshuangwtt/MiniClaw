@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any
+
+
+class ToolCapability(StrEnum):
+    """Risk category used by the central permission policy."""
+
+    READ_ONLY = "read_only"
+    FILE_WRITE = "file_write"
+    SHELL_EXECUTION = "shell_execution"
+    NETWORK_ACCESS = "network_access"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
 
 
 class Tool(ABC):
@@ -40,6 +51,7 @@ class Tool(ABC):
     description: str
     schema: dict[str, Any]
     timeout: float | None = None
+    capability: ToolCapability = ToolCapability.READ_ONLY
 
     @abstractmethod
     def run(self, **kwargs: Any) -> Any:

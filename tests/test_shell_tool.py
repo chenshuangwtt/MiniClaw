@@ -70,13 +70,13 @@ class TestIsCommandSafe:
 
 class TestRunShell:
     def test_simple_command(self):
-        result = RunShell().run(command="echo hello")
+        result = RunShell(allow_shell=True).run(command="echo hello")
         assert result["stdout"].strip() == "hello"
         assert result["stderr"] == ""
         assert result["exit_code"] == 0
 
     def test_command_with_stderr(self):
-        result = RunShell().run(
+        result = RunShell(allow_shell=True).run(
             command=(
                 f"{sys.executable} -c "
                 '"import sys; sys.stderr.write(chr(101)+chr(114)+chr(114)+chr(10))"'
@@ -86,11 +86,11 @@ class TestRunShell:
         assert result["exit_code"] == 0
 
     def test_nonzero_exit_code(self):
-        result = RunShell().run(command=f'{sys.executable} -c "exit(42)"')
+        result = RunShell(allow_shell=True).run(command=f'{sys.executable} -c "exit(42)"')
         assert result["exit_code"] == 42
 
     def test_blocked_command_returns_error(self):
-        result = RunShell().run(command="rm -rf /")
+        result = RunShell(allow_shell=True).run(command="rm -rf /")
         assert "error" in result
         assert "Blocked" in result["error"]
 
@@ -100,27 +100,31 @@ class TestRunShell:
         assert "disabled" in result["error"]
 
     def test_allowed_prefixes_block_unlisted_command(self):
-        result = RunShell(allowed_prefixes=["echo"]).run(command="python --version")
+        result = RunShell(allow_shell=True, allowed_prefixes=["echo"]).run(
+            command="python --version"
+        )
         assert "error" in result
         assert "allowed prefixes" in result["error"]
 
     def test_allowed_prefixes_allow_listed_command(self):
-        result = RunShell(allowed_prefixes=["echo"]).run(command="echo hello")
+        result = RunShell(allow_shell=True, allowed_prefixes=["echo"]).run(command="echo hello")
         assert result["exit_code"] == 0
         assert "hello" in result["stdout"]
 
     def test_allowed_prefixes_require_command_boundary(self):
-        result = RunShell(allowed_prefixes=["echo"]).run(command="echoevil hello")
+        result = RunShell(allow_shell=True, allowed_prefixes=["echo"]).run(command="echoevil hello")
         assert "error" in result
         assert "allowed prefixes" in result["error"]
 
     def test_allowed_prefixes_block_command_chaining(self):
-        result = RunShell(allowed_prefixes=["echo"]).run(command="echo hello && python --version")
+        result = RunShell(allow_shell=True, allowed_prefixes=["echo"]).run(
+            command="echo hello && python --version"
+        )
         assert "error" in result
         assert "allowed prefixes" in result["error"]
 
     def test_timeout(self):
-        result = RunShell().run(
+        result = RunShell(allow_shell=True).run(
             command=f'{sys.executable} -c "import time; time.sleep(10)"',
             timeout=1,
         )
@@ -128,7 +132,7 @@ class TestRunShell:
         assert "timed out" in result["error"]
 
     def test_invalid_command(self):
-        result = RunShell().run(command="nonexistent_command_xyz_12345")
+        result = RunShell(allow_shell=True).run(command="nonexistent_command_xyz_12345")
         # On Windows this may return exit_code != 0 or an error
         assert "exit_code" in result or "error" in result
 
@@ -136,7 +140,7 @@ class TestRunShell:
         script = Path.cwd() / ".sandbox_shell_multi.py"
         script.write_text("print('line1')\nprint('line2')\nprint('line3')\n")
         try:
-            result = RunShell().run(command=f'{sys.executable} "{script}"')
+            result = RunShell(allow_shell=True).run(command=f'{sys.executable} "{script}"')
             lines = result["stdout"].strip().split("\n")
             assert len(lines) == 3
         finally:

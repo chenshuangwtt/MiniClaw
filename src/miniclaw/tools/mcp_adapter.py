@@ -27,7 +27,7 @@ import subprocess
 import threading
 from typing import Any
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,8 @@ class MCPToolAdapter(Tool):
         )
         self.schema = _convert_schema(mcp_tool_schema)
         self._client = mcp_client
+        # Remote tools are not assumed read-only; callers must explicitly approve them.
+        self.capability = ToolCapability.EXTERNAL_SIDE_EFFECT
 
     def run(self, **kwargs: Any) -> Any:
         """Call the MCP tool via the client."""

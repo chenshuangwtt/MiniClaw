@@ -1,6 +1,6 @@
 """Tool abstraction, registry, and built-in tools."""
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 from miniclaw.tools.registry import ToolRegistry
 from miniclaw.tools.file_tools import ListFiles, ReadFile, WriteFile
 from miniclaw.tools.shell_tool import RunShell
@@ -13,6 +13,7 @@ __all__ = [
     "AuditEvent",
     "AuditLogger",
     "Tool",
+    "ToolCapability",
     "ToolRegistry",
     "PermissionDecision",
     "PermissionPolicy",

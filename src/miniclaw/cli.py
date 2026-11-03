@@ -69,12 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--verbose", "-v", action="store_true", help="Show trace after run.")
     run_p.add_argument(
-        "--stream", action="store_true", default=False, help="Stream LLM output token by token."
+        "--mode",
+        choices=["portable", "native"],
+        default=None,
+        help="Tool-calling protocol (default: native for OpenAI, portable otherwise).",
     )
     run_p.add_argument(
         "--user-id", default="default", help="User ID for memory (default: default)."
     )
-    run_p.add_argument("--memory", action="store_true", default=False, help="Enable Mem0 memory.")
+    run_p.add_argument(
+        "--memory", action="store_true", default=False, help="Enable scoped SQLite memory."
+    )
     run_p.add_argument("--no-memory", action="store_true", default=False, help="Disable memory.")
     run_p.add_argument(
         "--allow-file-write", action="store_true", default=False, help="Allow file write tool."
@@ -85,6 +90,26 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--allow-search", action="store_true", default=False, help="Allow web search tool."
     )
+    run_p.add_argument(
+        "--allow-network", action="store_true", default=False, help="Allow network-capable tools."
+    )
+
+    # --- resume ---
+    resume_p = sub.add_parser("resume", help="Resume a durable run from its latest checkpoint.")
+    resume_p.add_argument("run_id", help="Run ID shown by the run command.")
+    resume_p.add_argument("--llm", choices=["fake", "openai"], default=None)
+    resume_p.add_argument("--model", default=None)
+    resume_p.add_argument("--api-key", default=None)
+    resume_p.add_argument("--base-url", default=None)
+    resume_p.add_argument("--mode", choices=["portable", "native"], default=None)
+    resume_p.add_argument("--user-id", default="default")
+    resume_p.add_argument("--memory", action="store_true")
+    resume_p.add_argument("--no-memory", action="store_true")
+    resume_p.add_argument("--approve-pending", action="store_true")
+    resume_p.add_argument("--allow-file-write", action="store_true")
+    resume_p.add_argument("--allow-shell", action="store_true")
+    resume_p.add_argument("--allow-search", action="store_true")
+    resume_p.add_argument("--allow-network", action="store_true")
 
     # --- chat ---
     chat_p = sub.add_parser("chat", help="Interactive chat mode.")
@@ -101,11 +126,12 @@ def build_parser() -> argparse.ArgumentParser:
     # --- memory ---
     mem_p = sub.add_parser("memory", help="Manage long-term memory.")
     mem_sub = mem_p.add_subparsers(dest="memory_action")
-    mem_sub.add_parser("list", help="List all saved memories (SQLite).")
-    add_p = mem_sub.add_parser("add", help="Save a memory via Mem0.")
+    list_p = mem_sub.add_parser("list", help="List scoped SQLite memories.")
+    list_p.add_argument("--user-id", default="default", help="User ID.")
+    add_p = mem_sub.add_parser("add", help="Save a scoped SQLite memory.")
     add_p.add_argument("text", help="Text to remember.")
     add_p.add_argument("--user-id", default="default", help="User ID.")
-    search_p = mem_sub.add_parser("search", help="Search memories via Mem0.")
+    search_p = mem_sub.add_parser("search", help="Search scoped SQLite memories.")
     search_p.add_argument("query", help="Search query.")
     search_p.add_argument("--user-id", default="default", help="User ID.")
     search_p.add_argument("--limit", type=int, default=5, help="Max results.")
@@ -165,6 +191,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         _cmd_run(args, config)
+    elif args.command == "resume":
+        _cmd_resume(args, config)
     elif args.command == "chat":
         _cmd_chat(args, config)
     elif args.command == "memory":
@@ -216,12 +244,12 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
     permission_policy = _permission_policy_from_config(config, args)
     audit_logger = AuditLogger()
     registry = _register_default_tools(config, args)
-    memory_backend = _resolve_memory_backend(args)
 
     with SQLiteStore(config.storage.db_path) as store:
         session_id = store.create_session(title=args.task[:80])
+        memory_backend = _resolve_memory_backend(args, store)
 
-        mem_label = "Mem0" if getattr(args, "memory", False) else "off"
+        mem_label = "SQLite" if getattr(args, "memory", False) else "off"
         print(f"🐾 MiniClaw v{__version__} — session #{session_id}  memory={mem_label}")
         print(f"📋 Task: {args.task}\n")
 
@@ -233,6 +261,11 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
             memory_backend=memory_backend,
             permission_policy=permission_policy,
             audit_logger=audit_logger,
+            store=store,
+            session_id=session_id,
+        )
+        agent.parse_mode = args.mode or (
+            "native" if config.llm.provider == "openai" else "portable"
         )
 
         # Show injected memories in verbose mode
@@ -256,14 +289,8 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         if result.success:
             store.save_message(session_id, "user", args.task)
             store.save_message(session_id, "assistant", result.answer)
-            if getattr(args, "stream", False):
-                print(f"✅ Answer ({result.steps_taken} steps):")
-                print()
-                _stream_print(result.answer)
-                print()
-            else:
-                print(f"✅ Answer ({result.steps_taken} steps):")
-                print(f"\n{result.answer}\n")
+            print(f"✅ Answer ({result.steps_taken} steps, run {result.run_id[:8]}):")
+            print(f"\n{result.answer}\n")
         else:
             print(f"❌ Failed after {result.steps_taken} steps:")
             print(f"\n{result.error}\n")
@@ -271,6 +298,58 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         if args.verbose:
             _print_trace(result.trace.steps)
             _print_audit(audit_logger.events())
+
+
+def _cmd_resume(args: argparse.Namespace, config) -> None:
+    """Resume a checkpoint without silently authorizing pending side effects."""
+    import asyncio
+
+    from miniclaw.agent.loop import AgentLoop
+    from miniclaw.storage.sqlite_store import SQLiteStore
+    from miniclaw.tools.audit import AuditLogger
+
+    with SQLiteStore(config.storage.db_path) as store:
+        run = store.get_run(args.run_id)
+        if run is None:
+            print(f"No run found with ID {args.run_id!r}.")
+            return
+        agent = AgentLoop(
+            llm=_create_llm_from_config(config),
+            registry=_register_default_tools(config, args),
+            max_steps=config.agent.max_steps,
+            max_errors=config.agent.max_errors,
+            memory_backend=_resolve_memory_backend(args, store),
+            permission_policy=_permission_policy_from_config(config, args),
+            audit_logger=AuditLogger(),
+            store=store,
+            session_id=run["session_id"],
+        )
+        if args.mode is not None:
+            agent.parse_mode = args.mode
+        try:
+            result = asyncio.run(
+                agent.resume_async(
+                    args.run_id,
+                    user_id=args.user_id,
+                    approve_pending=args.approve_pending,
+                )
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(f"Cannot resume: {exc}")
+            return
+
+        if run["session_id"] is not None:
+            existing_steps = {
+                item["step"] for item in store.list_traces(run["session_id"], limit=10_000)
+            }
+            for step in result.trace.steps:
+                if step.step not in existing_steps:
+                    store.save_trace(run["session_id"], step.step, step.model_dump_json())
+
+    if result.success:
+        print(f"Resumed run {args.run_id[:8]}: {result.answer}")
+    else:
+        print(f"Run {args.run_id[:8]} is {result.status.value}: {result.error}")
 
 
 def _cmd_chat(args: argparse.Namespace, config) -> None:
@@ -330,33 +409,40 @@ def _cmd_chat(args: argparse.Namespace, config) -> None:
 
 def _cmd_memory(args: argparse.Namespace, config) -> None:
     """Memory subcommands."""
+    from miniclaw.memory.manager import MemoryManager
+    from miniclaw.memory.sqlite_backend import SQLiteMemoryBackend
     from miniclaw.storage.sqlite_store import SQLiteStore
+
+    project_id = str(Path.cwd().resolve())
 
     if args.memory_action == "list":
         with SQLiteStore(config.storage.db_path) as store:
-            memories = store.list_memories()
+            memories = store.list_agent_memories(args.user_id, project_id)
             if not memories:
                 print("No memories saved.")
                 return
             print(f"📚 Memories ({len(memories)}):\n")
             for m in memories:
-                importance = "⭐" * m["importance"]
-                print(f"  [{m['key']}] = {m['value']}")
-                print(f"    Importance: {importance}  Updated: {m['updated_at']}\n")
+                print(f"  [{m['memory_key']}] {m['content']}")
+                print(f"    Source: {m['source']}  Updated: {m['updated_at']}\n")
 
     elif args.memory_action == "add":
-        backend = _create_mem0_backend()
-        if backend is None:
-            return
-        backend.add(args.text, user_id=args.user_id)
-        print(f"✅ Memory saved for user '{args.user_id}':")
-        print(f"   {args.text}")
+        with SQLiteStore(config.storage.db_path) as store:
+            backend = SQLiteMemoryBackend(store, project_id)
+            stored = MemoryManager(backend).add(
+                args.text, args.user_id, metadata={"source": "manual"}
+            )
+            if stored:
+                print(f"✅ Memory saved for user '{args.user_id}':")
+                print(f"   {args.text}")
+            else:
+                print("Memory was not saved because it was filtered or conflicted.")
 
     elif args.memory_action == "search":
-        backend = _create_mem0_backend()
-        if backend is None:
-            return
-        results = backend.search(args.query, user_id=args.user_id, limit=args.limit)
+        with SQLiteStore(config.storage.db_path) as store:
+            results = SQLiteMemoryBackend(store, project_id).search(
+                args.query, user_id=args.user_id, limit=args.limit
+            )
         if not results:
             print(f"No memories found for '{args.query}'.")
             return
@@ -737,17 +823,17 @@ def _resolve_session_id(store, session_id: int | None) -> int | None:
     return row["id"]
 
 
-def _resolve_memory_backend(args):
+def _resolve_memory_backend(args, store=None):
     """Resolve which memory backend to use based on CLI flags."""
     from miniclaw.memory.base import NullMemoryBackend
 
     if getattr(args, "no_memory", False):
         return NullMemoryBackend()
     if getattr(args, "memory", False):
-        backend = _create_mem0_backend()
-        if backend is not None:
-            return backend
-        print("⚠️  Mem0 unavailable, falling back to no memory.")
+        if store is not None:
+            from miniclaw.memory.sqlite_backend import SQLiteMemoryBackend
+
+            return SQLiteMemoryBackend(store, project_id=str(Path.cwd().resolve()))
         return NullMemoryBackend()
     return NullMemoryBackend()
 
@@ -812,6 +898,8 @@ def _permission_policy_from_config(config, args=None):
             policy.allow_shell = True
         if getattr(args, "allow_search", False):
             policy.allow_search = True
+        if getattr(args, "allow_network", False):
+            policy.allow_network = True
 
     return policy
 
@@ -845,12 +933,6 @@ def _register_default_tools(config=None, args=None):
     if allow_search:
         registry.register(WebSearch())
     return registry
-
-
-def _stream_print(text: str) -> None:
-    """Print an already computed answer incrementally without another LLM call."""
-    for char in text:
-        print(char, end="", flush=True)
 
 
 def _print_trace(steps) -> None:

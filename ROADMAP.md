@@ -1,59 +1,26 @@
 # MiniClaw Roadmap
 
-This roadmap keeps MiniClaw focused as a learning-oriented, interview-ready Agent Runtime.
+## v1.0.0 - Local Agent Runtime
 
-## Current Version: v0.4 Runtime Hardening
+Status: complete for local, educational use.
 
-Status: complete and ready for GitHub publishing.
+- Unified async-first engine with sync and async facades
+- Portable JSON and OpenAI-compatible native Tool Calling
+- Multi-call execution with tool-call ID association
+- Schema validation, timeout/error observations, capability-based policy, and audit events
+- Workspace-bound file tools; file write, shell, network, and external-side-effect capabilities default to deny
+- SQLite session, trace, run, checkpoint, and scoped long-term-memory persistence
+- Offline repository-maintenance demonstration and GitHub Actions CI
 
-- Package CLI entry point: `miniclaw` via `src/miniclaw/cli.py`
-- Compatibility wrapper: `main.py`
-- Environment diagnostics: `miniclaw doctor`
-- Trace aggregation: `miniclaw trace summary`
-- Trace HTML export: `miniclaw trace html`
-- Workspace-bound file tools
-- Shell tool safety controls
-- Tool timeouts and cooperative cancellation
-- Optional sandboxed shell execution with path boundaries
-- SQLite runtime data stored under `.miniclaw/`
-- README / README_CN / code walkthrough updated for GitHub presentation
-- Permission policy object for file writes and shell commands
-- In-memory tool audit logging
-- `MINICLAW_*` environment variable overrides
-- Trace replay: `miniclaw trace replay`
-- Add examples that demonstrate recovery, memory, and context compression end to end
-- Optional vector-backed memory with dependency-free hashed embeddings
-- Composite memory backend, conflict handling, and importance decay
-- LLM-based memory extractor
-- Web/search tool behind explicit permission
-- OpenAI-compatible streaming client with a formal `BaseLLM.stream()` interface
-- Minimal OpenAPI adapter for JSON/YAML specs
-- Minimal stdio MCP adapter
-- Add CI workflow for lint and tests
-- Publish a small architecture diagram in the README
+## Explicit Limits
 
-## Before Publishing
-
-- Run `uv sync --extra dev`
-- Run `uv run ruff format --check src/ tests/`
-- Run `uv run ruff check src/ tests/`
-- Run `uv run pytest`
-- Run `uv run miniclaw --version`
-- Run `uv run miniclaw doctor`
-- Confirm `git status --short --ignored` has no runtime data outside ignored paths
-- Do not commit `.venv/`, `.uv-cache/`, `.test-tmp/`, `.pytest_tmp/`, `.idea/`, `.codegraph/`, `.miniclaw/`, `*.db`, or `.env`
-
-## v0.5 Candidate
-
-- Optional persistent vector memory store
-- Streaming display mode in the CLI
-- More integration examples for OpenAI-compatible local endpoints
-- Coverage gate in CI
-- Schema migration support if persistent `.miniclaw/*.db` compatibility becomes a goal
+- This is not a security sandbox. `SandboxExecutor` narrows environment, paths, and command patterns, but it cannot provide OS/container isolation.
+- Checkpoints resume cancelled context and explicit approvals. A checkpoint marked `in_flight` is never retried automatically and requires manual reconciliation.
+- Native-provider pending tool calls and arbitrary in-process thread cancellation require manual reconciliation/process isolation.
+- Trace replay is read-only presentation, not execution resume.
+- Provider streaming exists at `BaseLLM.stream()` / `OpenAIClient.stream()`; the CLI does not pretend a completed answer is live streaming.
 
 ## Not Planned
 
-- No LangChain, AutoGen, CrewAI, or other agent frameworks
-- No heavy UI layer
-- No distributed runtime
-- No hidden magic around tool calls or parser recovery
+- Agent frameworks, web UI, chat channels, distributed execution, or hidden autonomous background work
+- Automatic destructive actions or bypasses for the permission policy

@@ -32,7 +32,7 @@ from typing import Any
 
 import yaml
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,11 @@ class OpenAPIToolAdapter(Tool):
         self.description = summary or f"{method.upper()} {path}"
         self.schema = _build_json_schema(parameters, request_body)
         self._method = method.upper()
+        self.capability = (
+            ToolCapability.NETWORK_ACCESS
+            if self._method in {"GET", "HEAD", "OPTIONS"}
+            else ToolCapability.EXTERNAL_SIDE_EFFECT
+        )
         self._path = path
         self._base_url = base_url.rstrip("/")
         self._parameters = parameters

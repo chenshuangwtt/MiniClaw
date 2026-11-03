@@ -189,6 +189,13 @@ class SandboxExecutor:
             "USER": os.environ.get("USER", "sandbox"),
             "LANG": os.environ.get("LANG", "en_US.UTF-8"),
         }
+        # Windows Python and cmd.exe require these runtime locations. This is
+        # process-environment hygiene, not OS-level isolation.
+        if os.name == "nt":
+            for key in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
+                value = os.environ.get(key)
+                if value:
+                    env[key] = value
 
         # Network restriction
         if not self.policy.network_access:

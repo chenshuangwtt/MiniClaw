@@ -40,7 +40,7 @@ with SQLiteStore(DB_PATH) as store:
     store.save_memory("user:city", "Beijing", importance=5)
     store.save_memory("user:language", "Python", importance=3)
     store.save_memory("project:name", "MiniClaw", importance=9)
-    print(f"[3] 保存了 4 条长期记忆")
+    print("[3] 保存了 4 条长期记忆")
 
     # --- 4. 搜索记忆 ---
     results = store.search_memories("alice")
@@ -51,22 +51,34 @@ with SQLiteStore(DB_PATH) as store:
 
     # --- 5. 按重要度排序 ---
     mems = store.list_memories()
-    print(f"[5] 所有记忆（按重要度排序）:")
+    print("[5] 所有记忆（按重要度排序）:")
     for m in mems:
         stars = "*" * m["importance"]
         print(f"    [{m['key']}] = {m['value']}  importance={stars}")
 
     # --- 6. 保存 trace ---
-    store.save_trace(sid1, step=1, event_json=json.dumps({
-        "parsed_action": "tool_call",
-        "tool_name": "get_weather",
-        "arguments": {"city": "Beijing"},
-        "observation": "Sunny, 25C",
-    }))
-    store.save_trace(sid1, step=2, event_json=json.dumps({
-        "parsed_action": "final_answer",
-        "observation": "Beijing: Sunny, 25C",
-    }))
+    store.save_trace(
+        sid1,
+        step=1,
+        event_json=json.dumps(
+            {
+                "parsed_action": "tool_call",
+                "tool_name": "get_weather",
+                "arguments": {"city": "Beijing"},
+                "observation": "Sunny, 25C",
+            }
+        ),
+    )
+    store.save_trace(
+        sid1,
+        step=2,
+        event_json=json.dumps(
+            {
+                "parsed_action": "final_answer",
+                "observation": "Beijing: Sunny, 25C",
+            }
+        ),
+    )
     print(f"[6] 会话 #{sid1} 保存了 2 条 trace")
 
     # --- 7. 查询 trace ---
@@ -76,7 +88,9 @@ with SQLiteStore(DB_PATH) as store:
         event = json.loads(t["event_json"])
         action = event.get("parsed_action", "?")
         if action == "tool_call":
-            print(f"    Step {t['step']}: tool_call → {event.get('tool_name')}({event.get('arguments')})")
+            print(
+                f"    Step {t['step']}: tool_call → {event.get('tool_name')}({event.get('arguments')})"
+            )
         else:
             print(f"    Step {t['step']}: {action}")
 
@@ -84,7 +98,9 @@ with SQLiteStore(DB_PATH) as store:
     store.save_memory("user:name", "Bob", importance=10)
     mems = store.list_memories()
     name_mem = [m for m in mems if m["key"] == "user:name"][0]
-    print(f"[8] UPSERT: user:name 从 Alice 更新为 {name_mem['value']}，importance={name_mem['importance']}")
+    print(
+        f"[8] UPSERT: user:name 从 Alice 更新为 {name_mem['value']}，importance={name_mem['importance']}"
+    )
 
     # --- 9. 跨会话记忆 ---
     all_msgs = store.list_messages(sid1) + store.list_messages(sid2)

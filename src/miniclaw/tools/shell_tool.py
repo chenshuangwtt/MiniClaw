@@ -6,7 +6,7 @@ import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 from miniclaw.tools.permissions import command_matches_allowed_prefix
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ class RunShell(Tool):
     """Execute a shell command with safety guardrails."""
 
     name = "run_shell"
+    capability = ToolCapability.SHELL_EXECUTION
     description = (
         "Execute a shell command and return stdout, stderr, and exit code. "
         "Dangerous commands (rm, sudo, chmod, chown, kill, curl|bash, etc.) are blocked."
@@ -71,7 +72,7 @@ class RunShell(Tool):
 
     def __init__(
         self,
-        allow_shell: bool = True,
+        allow_shell: bool = False,
         allowed_prefixes: list[str] | None = None,
         sandbox: SandboxExecutor | None = None,
     ) -> None:

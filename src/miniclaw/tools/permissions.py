@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from miniclaw.tools.base import ToolCapability
+
 
 ApprovalCallback = Callable[[str, dict[str, Any]], bool]
 SHELL_CONTROL_OPERATORS = ("&&", "||", ";", "|", "&", "\n", "\r")
@@ -46,16 +48,24 @@ class PermissionPolicy:
     allow_file_write: bool = False  # Off by default — explicit opt-in required
     allow_shell: bool = False  # Off by default — explicit opt-in required
     allow_search: bool = False  # Off by default — explicit opt-in required
+    allow_network: bool = False
+    allow_external_side_effects: bool = False
     shell_allowed_prefixes: list[str] | None = None
     approval_required_tools: set[str] = field(default_factory=set)
     approval_callback: ApprovalCallback | None = None
 
-    def check(self, tool_name: str, arguments: dict[str, Any]) -> PermissionDecision:
+    def check(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        capability: ToolCapability | None = None,
+    ) -> PermissionDecision:
         """Return whether *tool_name* may run with *arguments*."""
-        if tool_name == "write_file" and not self.allow_file_write:
+        capability = capability or _legacy_capability(tool_name)
+        if capability is ToolCapability.FILE_WRITE and not self.allow_file_write:
             return PermissionDecision(False, "File writes are disabled by permission policy.")
 
-        if tool_name == "run_shell":
+        if capability is ToolCapability.SHELL_EXECUTION:
             if not self.allow_shell:
                 return PermissionDecision(
                     False, "Shell execution is disabled by permission policy."
@@ -70,12 +80,18 @@ class PermissionPolicy:
                     )
 
         if (
-            tool_name == "web_search"
-            and not self.allow_search
+            capability is ToolCapability.NETWORK_ACCESS
+            and not (self.allow_network or (tool_name == "web_search" and self.allow_search))
             and tool_name not in self.approval_required_tools
         ):
+            return PermissionDecision(False, "Network access is disabled by permission policy.")
+
+        if (
+            capability is ToolCapability.EXTERNAL_SIDE_EFFECT
+            and not self.allow_external_side_effects
+        ):
             return PermissionDecision(
-                False, "Web search is disabled. Set allow_search=True to enable."
+                False, "External side effects are disabled by permission policy."
             )
 
         if tool_name in self.approval_required_tools:
@@ -87,3 +103,12 @@ class PermissionPolicy:
                 )
 
         return PermissionDecision(True)
+
+
+def _legacy_capability(tool_name: str) -> ToolCapability:
+    """Keep direct policy calls compatible with older tool-name callers."""
+    return {
+        "write_file": ToolCapability.FILE_WRITE,
+        "run_shell": ToolCapability.SHELL_EXECUTION,
+        "web_search": ToolCapability.NETWORK_ACCESS,
+    }.get(tool_name, ToolCapability.READ_ONLY)

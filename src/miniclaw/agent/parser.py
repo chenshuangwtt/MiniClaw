@@ -118,7 +118,12 @@ class OutputParser:
                 args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
             except json.JSONDecodeError:
                 args = {"_raw": raw_args}
-            return ToolCall(tool_name=name, arguments=args, thought=content or "")
+            return ToolCall(
+                tool_name=name,
+                arguments=args,
+                thought=content or "",
+                tool_call_id=tc.get("id"),
+            )
 
         # No tool calls — treat as final answer
         return FinalAnswer(answer=content or "", thought="")

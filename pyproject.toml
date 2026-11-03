@@ -1,6 +1,6 @@
 [project]
 name = "miniclaw"
-version = "0.4.0"
+version = "1.0.0"
 description = "A lightweight, self-built Agent Harness — no LangChain, no AutoGen, no CrewAI."
 readme = "README.md"
 requires-python = ">=3.11"

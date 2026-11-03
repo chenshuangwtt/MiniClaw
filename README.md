@@ -16,7 +16,7 @@ The hard part is not the model — it's everything around it:
 - **How do you stay within the context window?** → Context Compression
 - **How do you persist knowledge across sessions?** → SQLite Memory
 
-MiniClaw implements each of these as a discrete, testable module. The result is a minimal but complete agent runtime that runs on a single machine, needs no external services beyond an LLM endpoint, and passes 660+ unit tests.
+MiniClaw implements each of these as a discrete, testable module. The result is a minimal but complete agent runtime that runs on a single machine, needs no external services beyond an LLM endpoint, and is verified by an offline-first unit test suite.
 
 ## Entry Points
 
@@ -24,6 +24,15 @@ MiniClaw implements each of these as a discrete, testable module. The result is 
 - `uv run python main.py ...` — source-tree compatibility wrapper for local demos.
 
 The canonical CLI lives in `src/miniclaw/cli.py`. The root `main.py` only forwards to that package entry point so both commands exercise the same runtime.
+
+## v1.0 Runtime
+
+- One async-first `AgentEngine` backs both `AgentLoop` and `AsyncAgentLoop`; run states are `created`, `running`, `waiting_approval`, `completed`, `failed`, and `cancelled`.
+- OpenAI-compatible native Tool Calling executes every call in a provider response and preserves `tool_call_id` associations. Portable JSON mode remains available with `--mode portable`.
+- The executor validates JSON Schema arguments before invocation, reports structured failures, and never turns tool errors or non-zero shell exits into successful observations.
+- Each tool declares a capability: read-only, file write, shell execution, network access, or external side effect. Sensitive capabilities are denied unless explicitly enabled.
+- SQLite persists runs and recovery checkpoints alongside sessions, messages, memories, and traces. A trace replay is observational; it never reruns tools.
+- `examples/demo_repository_maintenance.py` is an end-to-end offline maintenance demo using `FakeLLM`, a temporary workspace, explicit write/shell approval, and a real test command.
 
 ## v0.4 Runtime Hardening
 
@@ -196,7 +205,9 @@ All state is stored in SQLite via `SQLiteStore`:
 | `sessions` | One row per conversation |
 | `messages` | Full message history per session |
 | `memories` | Key-value long-term memory with importance ranking |
+| `agent_memories` | Scoped long-term memory for the runtime (`user_id` + project) |
 | `traces` | Per-step event log for debugging |
+| `runs` / `checkpoints` | Durable lifecycle and recovery state |
 
 ```python
 with SQLiteStore(".miniclaw/miniclaw.db") as store:
@@ -206,28 +217,26 @@ with SQLiteStore(".miniclaw/miniclaw.db") as store:
     results = store.search_memories("beijing")
 ```
 
-## Long-Term Memory with Mem0
+## Long-Term Memory
 
 LLM APIs are stateless — every request starts from zero. An Agent Harness needs an external memory layer to carry knowledge across sessions.
 
-MiniClaw uses **two storage systems** for different purposes:
+`--memory` uses the built-in SQLite memory backend. It records source and
+metadata and isolates values by both user and current workspace. Its simple,
+deterministic retrieval intentionally avoids a heavyweight vector database.
+`Mem0MemoryBackend` remains an optional adapter for application code, but is
+not the default agent-runtime path.
 
 | Layer | What it stores | Engine |
 | --- | --- | --- |
-| **SQLite** | sessions, messages, traces — structured execution logs | `sqlite3` (stdlib) |
-| **Mem0** | user preferences, project facts, long-term natural language memories | `mem0ai` (semantic retrieval) |
+| **SQLite** | sessions, messages, traces, runs, checkpoints, scoped memories | `sqlite3` (stdlib) |
+| **Mem0** | optional external semantic-memory adapter | `mem0ai` |
 
-> **SQLite records what happened; Mem0 remembers what will be useful later.**
+> **The default SQLite backend records both what happened and selective, scoped memories useful to the next run.**
 
 ### Usage
 
 ```bash
-# Save a memory
-uv run miniclaw memory add "用户偏好中文解释 Agent 底层流程" --user-id michael
-
-# Search memories
-uv run miniclaw memory search "用户喜欢什么回答风格？" --user-id michael
-
 # Run with memory enabled
 uv run miniclaw run "讲一下 RecoveryManager" --user-id michael --memory
 
@@ -241,7 +250,7 @@ uv run miniclaw run "task" --no-memory
 User Task
     │
     ▼
-Memory Search ─── mem0.search(task, user_id) → related memories
+Memory Search ─── SQLiteMemoryBackend.search(task, user_id) → related memories
     │
     ▼
 Memory Injection ─── "## Long-Term Memory\n- 用户偏好中文解释..."
@@ -259,7 +268,7 @@ Final Answer
 Memory Extraction ─── MemoryExtractor.should_remember(task)?
     │
     ▼
-Memory Add ─── mem0.add(extracted_text, user_id)
+Memory Add ─── MemoryManager.add(extracted_text, user_id, source="agent")
 ```
 
 Memory search failures never crash the agent. Memory add failures are silently logged.
@@ -326,7 +335,7 @@ MINICLAW_SHELL_ALLOWED_PREFIXES=echo,python -m pytest
 ```text
 $ uv run miniclaw run -v "list files and describe the project"
 
-🐾 MiniClaw v0.4.0 — session #1
+🐾 MiniClaw v1.0.0 — session #1
 📋 Task: list files and describe the project
 
 ✅ Answer (5 steps):

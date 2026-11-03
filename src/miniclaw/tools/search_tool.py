@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 from typing import Any
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class WebSearch(Tool):
     """
 
     name = "web_search"
+    capability = ToolCapability.NETWORK_ACCESS
     description = (
         "Search the web for information. "
         "Returns a list of search results with title, URL, and snippet."

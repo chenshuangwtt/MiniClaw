@@ -54,14 +54,16 @@ def calculate(expression: str) -> str:
 
 
 # --- Script the LLM responses ---
-llm = FakeLLM([
-    # Turn 1: call get_weather
-    '{"tool_call": {"name": "get_weather", "arguments": {"city": "Beijing"}}}',
-    # Turn 2: call calculate
-    '{"tool_call": {"name": "calculate", "arguments": {"expression": "25 * 9/5 + 32"}}}',
-    # Turn 3: final answer
-    "The weather in Beijing is Sunny, 25°C (that's 77°F).",
-])
+llm = FakeLLM(
+    [
+        # Turn 1: call get_weather
+        '{"tool_call": {"name": "get_weather", "arguments": {"city": "Beijing"}}}',
+        # Turn 2: call calculate
+        '{"tool_call": {"name": "calculate", "arguments": {"expression": "25 * 9/5 + 32"}}}',
+        # Turn 3: final answer
+        "The weather in Beijing is Sunny, 25°C (that's 77°F).",
+    ]
+)
 
 # --- Build and run ---
 trace = TraceLogger(console=True)

@@ -22,6 +22,7 @@ Final answer::
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -38,6 +39,9 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(
         default_factory=dict, description="Arguments to pass to the tool."
     )
+    tool_call_id: str | None = Field(
+        default=None, description="Provider-generated ID for native tool calls."
+    )
 
 
 class FinalAnswer(BaseModel):
@@ -52,3 +56,14 @@ class FinalAnswer(BaseModel):
 
 # The union type that the parser returns.
 AgentOutput = Union[ToolCall, FinalAnswer]
+
+
+class RunStatus(StrEnum):
+    """Lifecycle state for one agent run."""
+
+    CREATED = "created"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"

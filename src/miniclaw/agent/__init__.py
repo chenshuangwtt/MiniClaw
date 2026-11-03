@@ -3,10 +3,11 @@
 from miniclaw.agent.async_loop import AsyncAgentLoop
 from miniclaw.agent.context import ContextManager
 from miniclaw.agent.executor import Observation, ToolExecutor
-from miniclaw.agent.loop import AgentLoop, AgentResult
+from miniclaw.agent.engine import AgentEngine, AgentResult
+from miniclaw.agent.loop import AgentLoop
 from miniclaw.agent.parser import OutputParser, ParseError
 from miniclaw.agent.recovery import RecoveryManager
-from miniclaw.agent.state import AgentOutput, FinalAnswer, ToolCall
+from miniclaw.agent.state import AgentOutput, FinalAnswer, RunStatus, ToolCall
 from miniclaw.agent.trace import StepTrace, TraceLogger
 
 __all__ = [
@@ -19,7 +20,9 @@ __all__ = [
     "Observation",
     "ToolExecutor",
     "AgentLoop",
+    "AgentEngine",
     "AgentResult",
+    "RunStatus",
     "TraceLogger",
     "StepTrace",
     "RecoveryManager",

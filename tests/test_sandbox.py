@@ -139,19 +139,19 @@ class TestRunShellSandbox:
     """Test RunShell with optional sandbox."""
 
     def test_run_shell_without_sandbox(self) -> None:
-        tool = RunShell()
+        tool = RunShell(allow_shell=True)
         result = tool.run(command="echo hello", timeout=5)
         assert result.get("stdout", "").strip() == "hello"
 
     def test_run_shell_with_sandbox(self) -> None:
         sandbox = SandboxExecutor()
-        tool = RunShell(sandbox=sandbox)
+        tool = RunShell(allow_shell=True, sandbox=sandbox)
         result = tool.run(command="echo sandbox", timeout=5)
         assert result.get("stdout", "").strip() == "sandbox"
 
     def test_run_shell_sandbox_blocks_dangerous(self) -> None:
         sandbox = SandboxExecutor()
-        tool = RunShell(sandbox=sandbox)
+        tool = RunShell(allow_shell=True, sandbox=sandbox)
         result = tool.run(command="rm -rf /", timeout=5)
         # Should be blocked by either RunShell's safety filter or sandbox
         assert "error" in result
@@ -159,6 +159,6 @@ class TestRunShellSandbox:
     def test_run_shell_sandbox_blocked_by_safety_filter(self) -> None:
         """RunShell's own safety filter catches 'rm' before sandbox."""
         sandbox = SandboxExecutor()
-        tool = RunShell(sandbox=sandbox)
+        tool = RunShell(allow_shell=True, sandbox=sandbox)
         result = tool.run(command="rm -rf /tmp/test", timeout=5)
         assert "error" in result

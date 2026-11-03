@@ -67,8 +67,11 @@ uv run ruff format src/ tests/
 
 See `ROADMAP.md` for the current development plan.
 
-Current focus:
+## v1.0 Development Rules
 
-1. ✅ **v0.2 Hardening**: package CLI, doctor command, trace summary, workspace-bound file tools, safer shell tool, runtime data under `.miniclaw/`.
-2. **v0.3 Permissions & Replay**: explicit permission policy, tool audit logs, trace replay, better examples.
-3. **v0.4 Optional Extensions**: vector memory, web/search tool, streaming OpenAI-compatible client, CI.
+- `AgentEngine` is the only execution core. Keep `AgentLoop` and `AsyncAgentLoop` as thin facades.
+- Select the tool protocol explicitly: portable JSON for offline testing and native mode for OpenAI-compatible providers.
+- Every tool must declare a `ToolCapability`; high-risk capabilities stay denied unless a caller opts in.
+- Tool results must become structured failures for validation errors, exceptions, error payloads, timeouts, and non-zero shell exit codes.
+- Checkpoints are diagnostic/recovery records. Do not automatically replay file writes, shell calls, network calls, or external side effects.
+- Use `uv run pytest`, `uv run ruff format --check src tests`, and `uv run ruff check src tests` before considering work complete.

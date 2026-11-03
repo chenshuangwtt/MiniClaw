@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from miniclaw.tools.base import Tool
+from miniclaw.tools.base import Tool, ToolCapability
 from miniclaw.tools.security import resolve_workspace_path
 
 # Maximum characters to return from a single file read.
@@ -126,6 +126,7 @@ class WriteFile(Tool):
     """Write content to a file."""
 
     name = "write_file"
+    capability = ToolCapability.FILE_WRITE
     description = "Write content to a file. Creates parent directories if they don't exist."
     schema = {
         "type": "object",

@@ -222,7 +222,8 @@ class TestAgentLoopErrors:
 
         result = agent.run("Try failing")
 
-        assert result.success is True
+        assert result.success is False
+        assert "unresolved tool failure" in result.error
         # The tool error should be in the trace
         error_step = [t for t in result.trace.steps if t.error is not None]
         assert len(error_step) == 1
@@ -241,7 +242,8 @@ class TestAgentLoopErrors:
 
         result = agent.run("Try ghost")
 
-        assert result.success is True
+        assert result.success is False
+        assert "unresolved tool failure" in result.error
         error_step = [t for t in result.trace.steps if t.error is not None]
         assert len(error_step) == 1
         assert "ghost" in error_step[0].error.lower()

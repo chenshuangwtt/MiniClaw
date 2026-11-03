@@ -18,18 +18,23 @@ def resolve_workspace_path(
     Returns:
         ``(resolved_path, None)`` on success, or ``(None, error_message)``.
     """
-    try:
-        target = Path(path).expanduser().resolve()
-    except OSError as exc:
-        return None, f"Invalid path {path}: {exc}"
-
     if workspace_root is None:
+        try:
+            target = Path(path).expanduser().resolve()
+        except OSError as exc:
+            return None, f"Invalid path {path}: {exc}"
         return target, None
 
     try:
         root = Path(workspace_root).expanduser().resolve()
     except OSError as exc:
         return None, f"Invalid workspace root {workspace_root}: {exc}"
+
+    candidate = Path(path).expanduser()
+    try:
+        target = (root / candidate if not candidate.is_absolute() else candidate).resolve()
+    except OSError as exc:
+        return None, f"Invalid path {path}: {exc}"
 
     if target == root or root in target.parents:
         return target, None

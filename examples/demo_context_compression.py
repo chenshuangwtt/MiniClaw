@@ -29,7 +29,7 @@ for i in range(1, 16):
         f"这是 module_{i} 的完整代码，包含了 {i * 100} 行 Python 代码，主要实现了...",
     )
 
-print(f"\n--- 压缩前 ---")
+print("\n--- 压缩前 ---")
 print(f"消息数: {ctx.message_count}")
 print(f"估算 tokens: {ctx.estimate_tokens()}")
 print(f"需要压缩: {ctx.should_compress()}")
@@ -37,13 +37,13 @@ print(f"需要压缩: {ctx.should_compress()}")
 # --- 触发压缩 ---
 compressed = ctx.compress()
 
-print(f"\n--- 压缩后 ---")
+print("\n--- 压缩后 ---")
 print(f"消息数: {ctx.message_count}")
 print(f"估算 tokens: {ctx.estimate_tokens()}")
 print(f"是否执行了压缩: {compressed}")
 
 # --- 展示压缩后的消息结构 ---
-print(f"\n压缩后的消息列表:")
+print("\n压缩后的消息列表:")
 for i, msg in enumerate(ctx.get_messages()):
     role = msg["role"]
     content = msg["content"]
@@ -53,7 +53,7 @@ for i, msg in enumerate(ctx.get_messages()):
     print(f"  [{i}] {role}: {content}")
 
 # --- 展示 build_messages 输出 ---
-print(f"\n--- build_messages 输出 ---")
+print("\n--- build_messages 输出 ---")
 messages = ctx.build_messages(
     system_prompt="你是一个代码分析助手。",
     tools_prompt="## Tools\n- read_file: 读取文件",

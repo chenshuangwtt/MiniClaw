@@ -29,6 +29,8 @@ class Observation(BaseModel):
     success: bool
     output: Any = None
     error: str | None = None
+    error_kind: str | None = None
+    retryable: bool = False
 
 
 class ToolExecutor:
@@ -81,35 +83,20 @@ class ToolExecutor:
         # 1. Look up tool
         tool = self._registry.get(tool_name)
         if tool is None:
-            if self.audit_logger is not None:
-                self.audit_logger.log(
-                    tool_name,
-                    arguments,
-                    allowed=False,
-                    success=False,
-                    error=f"Tool '{tool_name}' is not registered.",
-                )
-            return Observation(
-                tool_name=tool_name,
-                success=False,
-                error=f"Tool '{tool_name}' is not registered.",
+            return self._failed_observation(
+                tool_name,
+                arguments,
+                f"Tool '{tool_name}' does not exist / is not registered.",
+                "unknown_tool",
             )
 
-        decision = self.permission_policy.check(tool_name, arguments)
+        validation_error = _validate_arguments(tool.schema, arguments)
+        if validation_error:
+            return self._failed_observation(tool_name, arguments, validation_error, "validation")
+
+        decision = self.permission_policy.check(tool_name, arguments, tool.capability)
         if not decision.allowed:
-            if self.audit_logger is not None:
-                self.audit_logger.log(
-                    tool_name,
-                    arguments,
-                    allowed=False,
-                    success=False,
-                    error=decision.reason,
-                )
-            return Observation(
-                tool_name=tool_name,
-                success=False,
-                error=decision.reason,
-            )
+            return self._failed_observation(tool_name, arguments, decision.reason, "permission")
 
         # 2. Execute (with optional timeout)
         timeout = getattr(tool, "timeout", None) or self.default_timeout
@@ -121,6 +108,25 @@ class ToolExecutor:
                 result = run_with_timeout(tool.run, kwargs=arguments, timeout=timeout, token=token)
             else:
                 result = tool.run(**arguments)
+
+            # Built-in adapters use an error payload for transport-level failures.
+            # Treat it as a failed observation rather than letting a later final
+            # answer incorrectly turn the overall run into a success.
+            if isinstance(result, dict) and result.get("error"):
+                return self._failed_observation(
+                    tool_name,
+                    arguments,
+                    str(result["error"]),
+                    "execution",
+                    retryable=bool(result.get("retryable", False)),
+                )
+            if isinstance(result, dict) and result.get("exit_code", 0) != 0:
+                return self._failed_observation(
+                    tool_name,
+                    arguments,
+                    f"Tool exited with status {result['exit_code']}: {result.get('stderr', '')}",
+                    "execution",
+                )
 
             if self.audit_logger is not None:
                 self.audit_logger.log(
@@ -138,35 +144,11 @@ class ToolExecutor:
         except TimedOutError:
             error = f"Tool '{tool_name}' timed out after {timeout}s"
             logger.warning(error)
-            if self.audit_logger is not None:
-                self.audit_logger.log(
-                    tool_name,
-                    arguments,
-                    allowed=True,
-                    success=False,
-                    error=error,
-                )
-            return Observation(
-                tool_name=tool_name,
-                success=False,
-                error=error,
-            )
+            return self._failed_observation(tool_name, arguments, error, "timeout", retryable=True)
         except Exception as exc:
             logger.exception("Tool '%s' raised an exception", tool_name)
             error = f"{type(exc).__name__}: {exc}"
-            if self.audit_logger is not None:
-                self.audit_logger.log(
-                    tool_name,
-                    arguments,
-                    allowed=True,
-                    success=False,
-                    error=error,
-                )
-            return Observation(
-                tool_name=tool_name,
-                success=False,
-                error=error,
-            )
+            return self._failed_observation(tool_name, arguments, error, "execution")
         finally:
             self._active_tokens.pop(tool_name, None)
 
@@ -185,6 +167,30 @@ class ToolExecutor:
             return True
         return False
 
+    def _failed_observation(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        error: str,
+        error_kind: str,
+        retryable: bool = False,
+    ) -> Observation:
+        if self.audit_logger is not None:
+            self.audit_logger.log(
+                tool_name,
+                arguments,
+                allowed=error_kind != "permission",
+                success=False,
+                error=error,
+            )
+        return Observation(
+            tool_name=tool_name,
+            success=False,
+            error=error,
+            error_kind=error_kind,
+            retryable=retryable,
+        )
+
     def execute_tool_call(self, tool_call: Any) -> Observation:
         """Convenience: accept a ``ToolCall`` pydantic model directly.
 
@@ -195,3 +201,44 @@ class ToolExecutor:
             An ``Observation``.
         """
         return self.execute(tool_call.tool_name, tool_call.arguments)
+
+
+def _validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> str | None:
+    """Validate the practical JSON Schema subset used by MiniClaw tools."""
+    if not isinstance(arguments, dict):
+        return "Tool arguments must be a JSON object."
+    required = schema.get("required", [])
+    for name in required:
+        if name not in arguments:
+            return f"Missing required argument: {name}."
+    for name, value in arguments.items():
+        property_schema = schema.get("properties", {}).get(name)
+        if property_schema is None:
+            if schema.get("additionalProperties") is False:
+                return f"Unexpected argument: {name}."
+            continue
+        expected = property_schema.get("type")
+        if expected and not _matches_json_type(value, expected):
+            return f"Argument '{name}' must be {expected}, got {type(value).__name__}."
+        choices = property_schema.get("enum")
+        if choices is not None and value not in choices:
+            return f"Argument '{name}' must be one of {choices}."
+    return None
+
+
+def _matches_json_type(value: Any, expected: str) -> bool:
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "null":
+        return value is None
+    return True
