@@ -32,6 +32,12 @@ from pathlib import Path
 from miniclaw import __version__
 
 
+EXIT_SUCCESS = 0
+EXIT_AGENT_FAILED = 1
+EXIT_USAGE_OR_CONFIG = 2
+EXIT_WAITING_APPROVAL = 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the CLI."""
     parser = argparse.ArgumentParser(
@@ -187,29 +193,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()
-        return
+        return EXIT_SUCCESS
 
     # Load config from file, then override with CLI args
     from miniclaw.agent.config import load_config
 
-    config = load_config(args.config)
-    _apply_cli_overrides(config, args)
+    try:
+        config = load_config(args.config)
+        _apply_cli_overrides(config, args)
+    except (OSError, ValueError) as exc:
+        print(f"配置错误：{exc}", file=sys.stderr)
+        return EXIT_USAGE_OR_CONFIG
 
     if args.command == "run":
-        _cmd_run(args, config)
+        return _cmd_run(args, config)
     elif args.command == "resume":
-        _cmd_resume(args, config)
+        return _cmd_resume(args, config)
     elif args.command == "runs":
         _cmd_runs(args, config)
     elif args.command == "chat":
-        _cmd_chat(args, config)
+        return _cmd_chat(args, config)
     elif args.command == "memory":
         _cmd_memory(args, config)
     elif args.command == "trace":
@@ -223,6 +233,7 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_doctor(config)
     else:
         parser.print_help()
+    return EXIT_SUCCESS
 
 
 def _apply_cli_overrides(config, args) -> None:
@@ -248,14 +259,27 @@ def _apply_cli_overrides(config, args) -> None:
 # ------------------------------------------------------------------
 
 
-def _cmd_run(args: argparse.Namespace, config) -> None:
+def _result_exit_code(result) -> int:
+    """Map a completed AgentResult to a stable process exit status."""
+    if result.success:
+        return EXIT_SUCCESS
+    if result.status.value == "waiting_approval":
+        return EXIT_WAITING_APPROVAL
+    return EXIT_AGENT_FAILED
+
+
+def _cmd_run(args: argparse.Namespace, config) -> int:
     """Run a single task."""
     from miniclaw.agent.loop import AgentLoop
     from miniclaw.memory.base import NullMemoryBackend
     from miniclaw.tools.audit import AuditLogger
     from miniclaw.storage.sqlite_store import SQLiteStore
 
-    llm = _create_llm_from_config(config)
+    try:
+        llm = _create_llm_from_config(config)
+    except (OSError, ValueError) as exc:
+        print(f"配置错误：{exc}", file=sys.stderr)
+        return EXIT_USAGE_OR_CONFIG
     permission_policy = _permission_policy_from_config(config, args)
     audit_logger = AuditLogger()
     registry = _register_default_tools(config, args)
@@ -315,9 +339,10 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         if args.verbose:
             _print_trace(result.trace.steps)
             _print_audit(audit_logger.events())
+    return _result_exit_code(result)
 
 
-def _cmd_resume(args: argparse.Namespace, config) -> None:
+def _cmd_resume(args: argparse.Namespace, config) -> int:
     """Resume a checkpoint without silently authorizing pending side effects."""
     import asyncio
 
@@ -329,9 +354,14 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
         run = store.get_run(args.run_id)
         if run is None:
             print(f"未找到 ID 为 {args.run_id!r} 的任务。")
-            return
+            return EXIT_USAGE_OR_CONFIG
+        try:
+            llm = _create_llm_from_config(config)
+        except (OSError, ValueError) as exc:
+            print(f"配置错误：{exc}", file=sys.stderr)
+            return EXIT_USAGE_OR_CONFIG
         agent = AgentLoop(
-            llm=_create_llm_from_config(config),
+            llm=llm,
             registry=_register_default_tools(config, args),
             max_steps=config.agent.max_steps,
             max_errors=config.agent.max_errors,
@@ -353,7 +383,7 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
             )
         except (RuntimeError, ValueError) as exc:
             print(f"无法恢复：{exc}")
-            return
+            return EXIT_AGENT_FAILED
 
         if run["session_id"] is not None:
             existing_steps = {
@@ -367,6 +397,7 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
         print(f"已恢复任务 {args.run_id}：{result.answer}")
     else:
         print(f"任务 {args.run_id} 状态为 {result.status.value}：{result.error}")
+    return _result_exit_code(result)
 
 
 def _cmd_runs(args: argparse.Namespace, config) -> None:
@@ -385,13 +416,17 @@ def _cmd_runs(args: argparse.Namespace, config) -> None:
         print(f"{run['id']}  {run['status']:<17}  {run['updated_at']}  {run['task'][:60]}")
 
 
-def _cmd_chat(args: argparse.Namespace, config) -> None:
+def _cmd_chat(args: argparse.Namespace, config) -> int:
     """Interactive chat mode."""
     from miniclaw.agent.loop import AgentLoop
     from miniclaw.tools.audit import AuditLogger
     from miniclaw.storage.sqlite_store import SQLiteStore
 
-    llm = _create_llm_from_config(config)
+    try:
+        llm = _create_llm_from_config(config)
+    except (OSError, ValueError) as exc:
+        print(f"配置错误：{exc}", file=sys.stderr)
+        return EXIT_USAGE_OR_CONFIG
     permission_policy = _permission_policy_from_config(config, args)
     audit_logger = AuditLogger()
     registry = _register_default_tools(config, args)
@@ -445,6 +480,7 @@ def _cmd_chat(args: argparse.Namespace, config) -> None:
             pass
 
         print("\nGoodbye!")
+    return EXIT_SUCCESS
 
 
 def _cmd_memory(args: argparse.Namespace, config) -> None:

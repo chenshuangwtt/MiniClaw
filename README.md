@@ -79,12 +79,14 @@ uv run miniclaw trace summary
 uv run miniclaw trace replay
 ```
 
+命令退出码：`0` 表示完成；`1` 表示 Agent 失败；`2` 表示参数或配置错误；`3` 表示任务暂停并等待人工审批。CI 或 PowerShell 脚本应检查 `$LASTEXITCODE`。
+
 ## 安全与恢复边界
 
 - 文件写入、Shell、网络和外部副作用默认拒绝，必须在单次运行中显式授权。
 - `SandboxExecutor` 只是进程级最佳努力限制，不是操作系统安全沙箱。
 - `in_flight` Checkpoint 与 Native pending 调用必须人工核对外部状态，不能自动重试。
-- Trace、Audit 和 Checkpoint 会脱敏常见 key、token、密码和 Authorization 值；这不是完整的 DLP 系统。
+- Trace、Audit 和 Checkpoint 会递归脱敏常见 key、token、密码和 Authorization 值，也会处理 Native Tool Calling 的 JSON 字符串参数；这不是完整的 DLP 系统。含敏感参数的待恢复操作不会使用脱敏后的值自动重放，必须重新授权或人工处理。
 - `mem0ai` 是可选依赖：`uv sync --extra mem0`。默认长期记忆使用 SQLite。
 
 ## 阅读顺序

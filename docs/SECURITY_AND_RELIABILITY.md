@@ -12,6 +12,8 @@ MiniClaw 采用本地优先、保守默认值。`PermissionPolicy` 在调用方�
 
 取消是模型/工具步骤间的协作式取消。超时会把控制权交还 Engine，但任意 Python 线程不能被安全地强制终止；需要硬取消时应使用子进程超时或真实进程隔离。Native Provider pending 调用也始终要求人工核对。上下文压缩会保留 Native assistant 工具调用与对应工具结果的合法关联，并在注入前截断过大的工具结果。
 
-Trace、Audit 和 Checkpoint 会脱敏常见 API Key、Authorization、Token、密码和 Secret 模式。这是纵深防御，不应替代“不要将凭据放进工具参数或模型提示词”的基本原则。
+Trace、Audit 和 Checkpoint 会递归脱敏常见 API Key、Authorization、Token、密码和 Secret 模式，包括 Native Tool Calling 中 `function.arguments` 这类 JSON 字符串。脱敏为持久化和展示生成副本，不会改写当前运行时的工具参数。这是纵深防御，不应替代“不要将凭据放进工具参数或模型提示词”的基本原则。
+
+若等待恢复的工具调用包含敏感参数，Checkpoint 会保留可诊断的脱敏结构并标记为需要重新授权；恢复流程绝不会使用 `[REDACTED]` 参数自动调用工具。CLI 退出码为：`0` 成功，`1` Agent 失败，`2` 参数或配置错误，`3` 等待人工审批。
 
 不要提交 `.env`、API Key、SQLite 运行数据、生成的 Trace 或 `.venv`。`.gitignore` 已覆盖这些本地文件；发布前仍应检查 `git status --ignored`。

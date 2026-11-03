@@ -21,7 +21,7 @@ from miniclaw.llm.base import BaseLLM, LLMResponse
 from miniclaw.memory.base import MemoryBackend, NullMemoryBackend
 from miniclaw.memory.extractor import MemoryExtractor
 from miniclaw.memory.manager import MemoryManager
-from miniclaw.redaction import redact_secrets
+from miniclaw.redaction import contains_sensitive_data, redact_secrets
 from miniclaw.tools.audit import AuditLogger
 from miniclaw.tools.permissions import PermissionPolicy
 from miniclaw.tools.registry import ToolRegistry
@@ -173,6 +173,16 @@ class AgentEngine:
         self._set_status(RunStatus.RUNNING)
 
         if pending:
+            if state.get("pending_action_reauth_required"):
+                self._pending_action = pending
+                return self._result(
+                    False,
+                    None,
+                    "待恢复操作包含已脱敏凭据，必须重新授权或人工处理，不能自动重放。",
+                    trace,
+                    len(trace.steps),
+                    RunStatus.WAITING_APPROVAL,
+                )
             if self.parse_mode == "native":
                 self._pending_action = pending
                 return self._result(
@@ -706,6 +716,10 @@ class AgentEngine:
         }
         if self._pending_action is not None:
             state["pending_action"] = self._pending_action
+            if contains_sensitive_data(self._pending_action):
+                # The redacted checkpoint remains structurally inspectable, but
+                # its arguments must never be replayed after a restart.
+                state["pending_action_reauth_required"] = True
         if observation is not None:
             state["last_observation"] = observation.model_dump(mode="json")
         self.store.save_checkpoint(self.run_id, sequence, redact_secrets(state))

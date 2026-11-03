@@ -344,6 +344,9 @@ uv run miniclaw run --llm openai --model deepseek-flash --mode native --max-step
 - Chat 会复用同一个 `AgentEngine` 与 SQLite session，因此后续回合仍能看到前面的用户约束。
 - Checkpoint 用于诊断和恢复，并不提供副作用的 exactly-once 语义：`in_flight` 或 Native pending 调用必须人工核对；已完成和失败的 run 不能恢复。
 - `mem0ai` 是可选依赖（`uv sync --extra mem0`）；默认运行时只需要 SQLite。
+- Trace、Audit 和 Checkpoint 会递归脱敏常见 API Key、Authorization、Token、密码和 Secret 模式，包括 Native Tool Calling 的 JSON 字符串参数。含敏感参数的待恢复操作不会使用 `[REDACTED]` 自动重放，必须重新授权或人工处理；这不是完整的 DLP 系统。
+
+CLI 退出码：`0` 表示完成；`1` 表示 Agent 失败；`2` 表示参数或配置错误；`3` 表示任务暂停、等待人工审批。PowerShell 自动化应检查 `$LASTEXITCODE`。
 
 ## 运行演示
 
