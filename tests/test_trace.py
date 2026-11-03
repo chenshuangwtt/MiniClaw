@@ -63,3 +63,8 @@ class TestTraceLogger:
         events = t.get_events()
         events.append({"fake": True})
         assert len(t.get_events()) == 1
+
+    def test_redacts_secret_data(self):
+        t = TraceLogger(console=False)
+        t.log("request", {"Authorization": "Bearer secret-value-123456"})
+        assert "secret-value-123456" not in str(t.get_events())

@@ -1,77 +1,80 @@
-# MiniClaw — Project Context
+# MiniClaw 项目说明
 
-## What is this?
+## 项目定位
 
-MiniClaw is a **lightweight, self-built Agent Harness** in Python. It demonstrates how to build an LLM agent runtime from scratch — no LangChain, no AutoGen, no CrewAI.
+MiniClaw 是一个用 Python 自建的轻量级 Agent Harness，用于演示如何从零实现 LLM Agent 运行时；不依赖 LangChain、AutoGen 或 CrewAI。
 
-## Architecture
+## 架构
 
 ```
-User → CLI → Agent Loop → LLM (fake/openai)
+用户 → CLI → Agent Loop → LLM（fake/openai）
                     ↓
-              JSON Parser → Tool Registry → execute
+              JSON Parser → Tool Registry → 执行
                     ↑
               Context Manager / Recovery / Memory / Trace
 ```
 
-## Tech Stack
+## 技术栈
 
-- **Python 3.11+**, managed by **uv**
-- **Dependencies**: `openai`, `tiktoken` (minimal)
-- **Dev**: `pytest`, `ruff`
-- **No heavy frameworks**: LangChain/AutoGen/CrewAI are explicitly excluded
+- **Python 3.11+**，由 **uv** 管理
+- **依赖**：`openai`、`tiktoken`、`pydantic`、`PyYAML`；`mem0ai` 为可选依赖（`uv sync --extra mem0`）
+- **开发工具**：`pytest`、`ruff`
+- **不使用重型框架**：明确排除 LangChain、AutoGen、CrewAI
 
-## Project Layout
+## 项目结构
 
 ```
-src/miniclaw/           # Main package
-  cli.py                # Canonical CLI entry point
-  agent/                # Agent loop, parser, executor, context, recovery, trace
-  tools/                # Tool base class, registry, file tools, shell tool
-  storage/              # SQLite persistence
-  memory/               # Memory backend abstraction + Mem0 adapter
-  llm/                  # BaseLLM, FakeLLM, OpenAI-compatible client
-tests/                  # pytest test suite
-examples/               # Demo scripts
+src/miniclaw/           # 主包
+  cli.py                # 标准 CLI 入口
+  agent/                # Agent 循环、解析、执行、上下文、恢复、追踪
+  tools/                # 工具基类、注册表、文件工具、Shell 工具
+  storage/              # SQLite 持久化
+  memory/               # 记忆后端抽象与 Mem0 适配器
+  llm/                  # BaseLLM、FakeLLM、OpenAI-compatible 客户端
+tests/                  # pytest 测试集
+examples/               # 演示脚本
 ```
 
-## Commands
+## 常用命令
 
 ```bash
-# Install (dev mode)
+# 安装开发依赖
 uv pip install -e ".[dev]"
 
-# Run tests
+# 运行测试
 uv run pytest
 
-# Run with FakeLLM (no API key needed)
+# 使用 FakeLLM 运行（不需要 API Key）
 uv run miniclaw run --llm fake
 
-# Run with OpenAI
+# 使用 OpenAI-compatible Provider 运行
 uv run miniclaw run --llm openai --model gpt-4o
 
-# Lint
+# 恢复前查看完整 Run ID
+uv run miniclaw runs list
+
+# 静态检查
 uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 ```
 
-## Conventions
+## 约定
 
-- All source in `src/miniclaw/`, all tests in `tests/`
-- Type hints everywhere (Python 3.11+ syntax)
-- Docstrings: Google style
-- Keep it simple — no metaclasses, no descriptors, no magic
-- Each module is independently testable (FakeLLM enables offline testing)
+- 源码统一放在 `src/miniclaw/`，测试统一放在 `tests/`
+- 全部代码使用类型标注（Python 3.11+ 语法）
+- Docstring 使用 Google 风格
+- 保持简单：不引入元类、描述器或隐式魔法
+- 每个模块应可独立测试，离线测试优先使用 FakeLLM
 
-## Development Phases
+## 开发阶段
 
-See `ROADMAP.md` for the current development plan.
+当前计划见 `ROADMAP.md`。
 
-## v1.0 Development Rules
+## v1.0 开发规则
 
-- `AgentEngine` is the only execution core. Keep `AgentLoop` and `AsyncAgentLoop` as thin facades.
-- Select the tool protocol explicitly: portable JSON for offline testing and native mode for OpenAI-compatible providers.
-- Every tool must declare a `ToolCapability`; high-risk capabilities stay denied unless a caller opts in.
-- Tool results must become structured failures for validation errors, exceptions, error payloads, timeouts, and non-zero shell exit codes.
-- Checkpoints are diagnostic/recovery records. Do not automatically replay file writes, shell calls, network calls, or external side effects.
-- Use `uv run pytest`, `uv run ruff format --check src tests`, and `uv run ruff check src tests` before considering work complete.
+- `AgentEngine` 是唯一执行核心；`AgentLoop` 与 `AsyncAgentLoop` 仅作为轻量外观。
+- 显式选择工具协议：离线测试使用 Portable JSON，OpenAI-compatible Provider 使用 Native 模式。
+- 每个工具都必须声明 `ToolCapability`；高风险能力在调用方显式开启前保持拒绝。
+- 参数校验、异常、错误载荷、超时和非零 Shell 退出码必须转换为结构化失败。
+- Checkpoint 是诊断/恢复记录，不能自动重放文件写入、Shell、网络或其他外部副作用。
+- 认为工作完成前必须执行 `uv run pytest`、`uv run ruff format --check src tests` 与 `uv run ruff check src tests`。

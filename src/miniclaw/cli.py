@@ -36,51 +36,47 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the CLI."""
     parser = argparse.ArgumentParser(
         prog="miniclaw",
-        description="MiniClaw — a lightweight, self-built Agent Harness.",
+        description="MiniClaw：轻量级、自建的 Agent Harness。",
     )
     parser.add_argument("--version", action="version", version=f"miniclaw {__version__}")
     parser.add_argument(
         "--config",
         default=None,
-        help="Path to config file (default: miniclaw.toml).",
+        help="配置文件路径（默认：miniclaw.toml）。",
     )
     parser.add_argument(
         "--db",
         default=None,
-        help="SQLite database path (overrides config).",
+        help="SQLite 数据库路径（覆盖配置）。",
     )
 
-    sub = parser.add_subparsers(dest="command", help="Available commands")
+    sub = parser.add_subparsers(dest="command", help="可用命令")
 
     # --- run ---
-    run_p = sub.add_parser("run", help="Run a single task.")
-    run_p.add_argument("task", help="The task description.")
+    run_p = sub.add_parser("run", help="运行单个任务。")
+    run_p.add_argument("task", help="任务描述。")
     run_p.add_argument(
-        "--llm", choices=["fake", "openai"], default=None, help="LLM backend (overrides config)."
+        "--llm", choices=["fake", "openai"], default=None, help="LLM 后端（覆盖配置）。"
     )
-    run_p.add_argument("--model", default=None, help="Model name (overrides config).")
-    run_p.add_argument("--api-key", default=None, help="OpenAI API key (overrides config).")
-    run_p.add_argument("--base-url", default=None, help="Custom API base URL (overrides config).")
+    run_p.add_argument("--model", default=None, help="模型名称（覆盖配置）。")
+    run_p.add_argument("--api-key", default=None, help="API Key（覆盖配置）。")
+    run_p.add_argument("--base-url", default=None, help="自定义 API 地址（覆盖配置）。")
+    run_p.add_argument("--max-steps", type=int, default=None, help="最大 Agent 步数（覆盖配置）。")
     run_p.add_argument(
-        "--max-steps", type=int, default=None, help="Max agent steps (overrides config)."
+        "--max-errors", type=int, default=None, help="最大连续错误次数（覆盖配置）。"
     )
-    run_p.add_argument(
-        "--max-errors", type=int, default=None, help="Max consecutive errors (overrides config)."
-    )
-    run_p.add_argument("--verbose", "-v", action="store_true", help="Show trace after run.")
+    run_p.add_argument("--verbose", "-v", action="store_true", help="运行后展示 Trace。")
     run_p.add_argument(
         "--mode",
         choices=["portable", "native"],
         default=None,
-        help="Tool-calling protocol (default: native for OpenAI, portable otherwise).",
+        help="工具调用协议（OpenAI 默认 native，其余默认 portable）。",
     )
+    run_p.add_argument("--user-id", default="default", help="记忆使用的用户 ID（默认：default）。")
     run_p.add_argument(
-        "--user-id", default="default", help="User ID for memory (default: default)."
+        "--memory", action="store_true", default=False, help="启用范围化 SQLite 记忆。"
     )
-    run_p.add_argument(
-        "--memory", action="store_true", default=False, help="Enable scoped SQLite memory."
-    )
-    run_p.add_argument("--no-memory", action="store_true", default=False, help="Disable memory.")
+    run_p.add_argument("--no-memory", action="store_true", default=False, help="禁用记忆。")
     run_p.add_argument(
         "--allow-file-write", action="store_true", default=False, help="Allow file write tool."
     )
@@ -95,8 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # --- resume ---
-    resume_p = sub.add_parser("resume", help="Resume a durable run from its latest checkpoint.")
-    resume_p.add_argument("run_id", help="Run ID shown by the run command.")
+    resume_p = sub.add_parser("resume", help="从最新 Checkpoint 恢复可持久化任务。")
+    resume_p.add_argument("run_id", help="run 命令展示的完整 Run ID。")
     resume_p.add_argument("--llm", choices=["fake", "openai"], default=None)
     resume_p.add_argument("--model", default=None)
     resume_p.add_argument("--api-key", default=None)
@@ -111,8 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume_p.add_argument("--allow-search", action="store_true")
     resume_p.add_argument("--allow-network", action="store_true")
 
+    # --- runs ---
+    runs_p = sub.add_parser("runs", help="查看可持久化 Agent 任务。")
+    runs_sub = runs_p.add_subparsers(dest="runs_action")
+    runs_list_p = runs_sub.add_parser("list", help="List recent runs with full IDs.")
+    runs_list_p.add_argument("--limit", type=int, default=20, help="Maximum rows to show.")
+
     # --- chat ---
-    chat_p = sub.add_parser("chat", help="Interactive chat mode.")
+    chat_p = sub.add_parser("chat", help="交互式多轮会话。")
     chat_p.add_argument(
         "--llm", choices=["fake", "openai"], default=None, help="LLM backend (overrides config)."
     )
@@ -122,9 +124,17 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p.add_argument(
         "--max-steps", type=int, default=None, help="Max agent steps (overrides config)."
     )
+    chat_p.add_argument("--mode", choices=["portable", "native"], default=None)
+    chat_p.add_argument("--user-id", default="default", help="User ID for memory.")
+    chat_p.add_argument("--memory", action="store_true", help="Enable scoped SQLite memory.")
+    chat_p.add_argument("--no-memory", action="store_true", help="Disable memory.")
+    chat_p.add_argument("--allow-file-write", action="store_true")
+    chat_p.add_argument("--allow-shell", action="store_true")
+    chat_p.add_argument("--allow-search", action="store_true")
+    chat_p.add_argument("--allow-network", action="store_true")
 
     # --- memory ---
-    mem_p = sub.add_parser("memory", help="Manage long-term memory.")
+    mem_p = sub.add_parser("memory", help="管理长期记忆。")
     mem_sub = mem_p.add_subparsers(dest="memory_action")
     list_p = mem_sub.add_parser("list", help="List scoped SQLite memories.")
     list_p.add_argument("--user-id", default="default", help="User ID.")
@@ -135,9 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     search_p.add_argument("query", help="Search query.")
     search_p.add_argument("--user-id", default="default", help="User ID.")
     search_p.add_argument("--limit", type=int, default=5, help="Max results.")
+    delete_p = mem_sub.add_parser("delete", help="Delete one exact scoped SQLite memory.")
+    delete_p.add_argument("text", help="Exact memory content to delete.")
+    delete_p.add_argument("--user-id", default="default", help="User ID.")
 
     # --- trace ---
-    trace_p = sub.add_parser("trace", help="View execution traces.")
+    trace_p = sub.add_parser("trace", help="查看执行 Trace。")
     trace_sub = trace_p.add_subparsers(dest="trace_action")
     trace_sub.add_parser("list", help="List traces from the latest session.")
     summary_p = trace_sub.add_parser("summary", help="Summarize traces from a session.")
@@ -169,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_sub = demo_p.add_subparsers(dest="demo_action")
     demo_sub.add_parser("context-compression", help="Demonstrate context compression.")
 
-    sub.add_parser("doctor", help="Check local environment and MiniClaw configuration.")
+    sub.add_parser("doctor", help="检查本地环境和 MiniClaw 配置。")
 
     return parser
 
@@ -193,6 +206,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_run(args, config)
     elif args.command == "resume":
         _cmd_resume(args, config)
+    elif args.command == "runs":
+        _cmd_runs(args, config)
     elif args.command == "chat":
         _cmd_chat(args, config)
     elif args.command == "memory":
@@ -203,7 +218,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.demo_action == "context-compression":
             _cmd_demo_context_compression()
         else:
-            print("Available demos: context-compression")
+            print("可用演示：context-compression")
     elif args.command == "doctor":
         _cmd_doctor(config)
     else:
@@ -250,8 +265,8 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         memory_backend = _resolve_memory_backend(args, store)
 
         mem_label = "SQLite" if getattr(args, "memory", False) else "off"
-        print(f"🐾 MiniClaw v{__version__} — session #{session_id}  memory={mem_label}")
-        print(f"📋 Task: {args.task}\n")
+        print(f"MiniClaw v{__version__} - 会话 #{session_id}  记忆 memory={mem_label}")
+        print(f"任务：{args.task}\n")
 
         agent = AgentLoop(
             llm=llm,
@@ -273,7 +288,7 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
             try:
                 mems = memory_backend.search(args.task, user_id=args.user_id, limit=5)
                 if mems:
-                    print(f"🧠 Injected {len(mems)} memories:")
+                    print(f"已注入记忆 / Injected {len(mems)} memories：")
                     for m in mems:
                         print(f"   - {m[:80]}")
                     print()
@@ -289,10 +304,12 @@ def _cmd_run(args: argparse.Namespace, config) -> None:
         if result.success:
             store.save_message(session_id, "user", args.task)
             store.save_message(session_id, "assistant", result.answer)
-            print(f"✅ Answer ({result.steps_taken} steps, run {result.run_id[:8]}):")
+            print(f"回答 / Answer（{result.steps_taken} 步）：")
+            print(f"任务 ID / Run ID: {result.run_id}")
             print(f"\n{result.answer}\n")
         else:
-            print(f"❌ Failed after {result.steps_taken} steps:")
+            print(f"任务在 {result.steps_taken} 步后失败：")
+            print(f"任务 ID / Run ID: {result.run_id}（{result.status.value}）")
             print(f"\n{result.error}\n")
 
         if args.verbose:
@@ -311,7 +328,7 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
     with SQLiteStore(config.storage.db_path) as store:
         run = store.get_run(args.run_id)
         if run is None:
-            print(f"No run found with ID {args.run_id!r}.")
+            print(f"未找到 ID 为 {args.run_id!r} 的任务。")
             return
         agent = AgentLoop(
             llm=_create_llm_from_config(config),
@@ -335,7 +352,7 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
                 )
             )
         except (RuntimeError, ValueError) as exc:
-            print(f"Cannot resume: {exc}")
+            print(f"无法恢复：{exc}")
             return
 
         if run["session_id"] is not None:
@@ -347,9 +364,25 @@ def _cmd_resume(args: argparse.Namespace, config) -> None:
                     store.save_trace(run["session_id"], step.step, step.model_dump_json())
 
     if result.success:
-        print(f"Resumed run {args.run_id[:8]}: {result.answer}")
+        print(f"已恢复任务 {args.run_id}：{result.answer}")
     else:
-        print(f"Run {args.run_id[:8]} is {result.status.value}: {result.error}")
+        print(f"任务 {args.run_id} 状态为 {result.status.value}：{result.error}")
+
+
+def _cmd_runs(args: argparse.Namespace, config) -> None:
+    """List durable runs without requiring a session lookup."""
+    from miniclaw.storage.sqlite_store import SQLiteStore
+
+    if args.runs_action not in (None, "list"):
+        return
+    with SQLiteStore(config.storage.db_path) as store:
+        runs = store.list_runs(limit=args.limit)
+    if not runs:
+        print("没有找到可持久化任务。")
+        return
+    print("任务 ID                            状态               更新时间                 任务")
+    for run in runs:
+        print(f"{run['id']}  {run['status']:<17}  {run['updated_at']}  {run['task'][:60]}")
 
 
 def _cmd_chat(args: argparse.Namespace, config) -> None:
@@ -359,21 +392,28 @@ def _cmd_chat(args: argparse.Namespace, config) -> None:
     from miniclaw.storage.sqlite_store import SQLiteStore
 
     llm = _create_llm_from_config(config)
-    permission_policy = _permission_policy_from_config(config)
+    permission_policy = _permission_policy_from_config(config, args)
     audit_logger = AuditLogger()
-    registry = _register_default_tools(config)
+    registry = _register_default_tools(config, args)
 
     with SQLiteStore(config.storage.db_path) as store:
         session_id = store.create_session(title="Interactive chat")
-        print(f"🐾 MiniClaw v{__version__} — interactive mode (session #{session_id})")
+        print(f"MiniClaw v{__version__} - interactive mode (session #{session_id})")
         print("Type your task, or 'exit' to quit.\n")
 
         agent = AgentLoop(
             llm=llm,
             registry=registry,
             max_steps=config.agent.max_steps,
+            max_errors=config.agent.max_errors,
+            memory_backend=_resolve_memory_backend(args, store),
             permission_policy=permission_policy,
             audit_logger=audit_logger,
+            store=store,
+            session_id=session_id,
+        )
+        agent.parse_mode = args.mode or (
+            "native" if config.llm.provider == "openai" else "portable"
         )
 
         try:
@@ -388,7 +428,7 @@ def _cmd_chat(args: argparse.Namespace, config) -> None:
                 if task.lower() in ("exit", "quit", "q"):
                     break
 
-                result = agent.run(task)
+                result = agent.run(task, user_id=args.user_id)
 
                 # Save to storage
                 for step in result.trace.steps:
@@ -397,14 +437,14 @@ def _cmd_chat(args: argparse.Namespace, config) -> None:
 
                 if result.success:
                     store.save_message(session_id, "assistant", result.answer)
-                    print(f"\n🤖 {result.answer}\n")
+                    print(f"\nAssistant: {result.answer}\n")
                 else:
-                    print(f"\n❌ {result.error}\n")
+                    print(f"\nFailed: {result.error}\n")
 
         except KeyboardInterrupt:
             pass
 
-        print("\nGoodbye! 🐾")
+        print("\nGoodbye!")
 
 
 def _cmd_memory(args: argparse.Namespace, config) -> None:
@@ -421,7 +461,7 @@ def _cmd_memory(args: argparse.Namespace, config) -> None:
             if not memories:
                 print("No memories saved.")
                 return
-            print(f"📚 Memories ({len(memories)}):\n")
+            print(f"Memories ({len(memories)}):\n")
             for m in memories:
                 print(f"  [{m['memory_key']}] {m['content']}")
                 print(f"    Source: {m['source']}  Updated: {m['updated_at']}\n")
@@ -433,7 +473,7 @@ def _cmd_memory(args: argparse.Namespace, config) -> None:
                 args.text, args.user_id, metadata={"source": "manual"}
             )
             if stored:
-                print(f"✅ Memory saved for user '{args.user_id}':")
+                print(f"Memory saved for user '{args.user_id}':")
                 print(f"   {args.text}")
             else:
                 print("Memory was not saved because it was filtered or conflicted.")
@@ -446,14 +486,20 @@ def _cmd_memory(args: argparse.Namespace, config) -> None:
         if not results:
             print(f"No memories found for '{args.query}'.")
             return
-        print(f"🔍 Found {len(results)} memories for '{args.query}':\n")
+        print(f"Found {len(results)} memories for '{args.query}':\n")
         for i, r in enumerate(results, 1):
             print(f"  {i}. {r}")
+
+    elif args.memory_action == "delete":
+        with SQLiteStore(config.storage.db_path) as store:
+            removed = SQLiteMemoryBackend(store, project_id).remove(args.text, args.user_id)
+        print("Memory deleted." if removed else "No exact scoped memory matched.")
 
     else:
         print("Usage: miniclaw memory list")
         print('       miniclaw memory add "text" [--user-id ID]')
         print('       miniclaw memory search "query" [--user-id ID] [--limit N]')
+        print('       miniclaw memory delete "exact text" [--user-id ID]')
 
 
 def _cmd_trace(args: argparse.Namespace, config) -> None:
@@ -469,7 +515,7 @@ def _cmd_trace(args: argparse.Namespace, config) -> None:
             if not traces:
                 print(f"No traces for session #{session_id}.")
                 return
-            print(f"🔍 Traces for session #{session_id} ({len(traces)} steps):\n")
+            print(f"Traces for session #{session_id} ({len(traces)} steps):\n")
             _print_trace_from_dicts(traces)
 
     elif args.trace_action == "summary":
@@ -733,7 +779,7 @@ def _cmd_demo_context_compression() -> None:
     recent_keep = 6
     ctx = ContextManager(max_context_tokens=max_tokens, recent_keep=recent_keep)
 
-    print("🐾 MiniClaw — Demo: Context Compression")
+    print("MiniClaw - Demo: Context Compression")
     print("=" * 55)
     print(f"  max_context_tokens = {max_tokens}")
     print(f"  recent_keep        = {recent_keep}")
@@ -801,9 +847,9 @@ def _cmd_demo_context_compression() -> None:
     print()
     print("=" * 55)
     print(f"Done. {count_before} messages ({tokens_before} tokens)")
-    print(f"  → {count_after} messages ({tokens_after} tokens)")
+    print(f"  -> {count_after} messages ({tokens_after} tokens)")
     reduction = (1 - tokens_after / tokens_before) * 100 if tokens_before else 0
-    print(f"  → {reduction:.0f}% token reduction")
+    print(f"  -> {reduction:.0f}% token reduction")
 
 
 # ------------------------------------------------------------------
@@ -843,12 +889,12 @@ def _create_mem0_backend():
     try:
         from miniclaw.memory.mem0_store import Mem0MemoryBackend
     except Exception:
-        print("❌ mem0ai is not installed. Install with: pip install mem0ai")
+        print("mem0ai is not installed. Install with: uv sync --extra mem0")
         return None
 
     backend = Mem0MemoryBackend()
     if not backend.is_available:
-        print("❌ Mem0 initialization failed. Check your configuration.")
+        print("Mem0 initialization failed. Check your configuration.")
         return None
     return backend
 
@@ -937,22 +983,22 @@ def _register_default_tools(config=None, args=None):
 
 def _print_trace(steps) -> None:
     """Pretty-print trace steps."""
-    print("── Trace ──")
+    print("-- Trace --")
     for s in steps:
         action = s.parsed_action
         if action == "tool_call":
             if s.error:
-                print(f"  Step {s.step}: 🔧 {s.tool_name}({s.arguments})")
-                print(f"         ❌ {s.error[:120]}")
+                print(f"  Step {s.step}: tool {s.tool_name}({s.arguments})")
+                print(f"         error: {s.error[:120]}")
             else:
-                print(f"  Step {s.step}: 🔧 {s.tool_name}({s.arguments})")
+                print(f"  Step {s.step}: tool {s.tool_name}({s.arguments})")
                 if s.observation:
                     obs_str = str(s.observation)[:100]
-                    print(f"         → {obs_str}")
+                    print(f"         result: {obs_str}")
         elif action == "final_answer":
-            print(f"  Step {s.step}: ✅ final_answer")
+            print(f"  Step {s.step}: final_answer")
         elif action == "parse_error":
-            print(f"  Step {s.step}: ⚠️  parse error: {s.error}")
+            print(f"  Step {s.step}: parse error: {s.error}")
         else:
             print(f"  Step {s.step}: {action}")
     print()
@@ -972,11 +1018,11 @@ def _print_trace_from_dicts(traces: list[dict]) -> None:
         if action == "tool_call":
             name = event.get("tool_name", "?")
             args = event.get("arguments", {})
-            print(f"  Step {step}: 🔧 {name}({args})")
+            print(f"  Step {step}: tool {name}({args})")
         elif action == "final_answer":
-            print(f"  Step {step}: ✅ final_answer")
+            print(f"  Step {step}: final_answer")
         elif action == "parse_error":
-            print(f"  Step {step}: ⚠️  parse error")
+            print(f"  Step {step}: parse error")
         else:
             print(f"  Step {step}: {action}")
     print()
@@ -1015,7 +1061,7 @@ def _print_audit(events) -> None:
     if not events:
         return
 
-    print("── Tool Audit ──")
+    print("-- Tool Audit --")
     for event in events:
         status = "allowed" if event.allowed else "blocked"
         result = "success" if event.success else "failed"

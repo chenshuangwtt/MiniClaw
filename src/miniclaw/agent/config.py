@@ -134,6 +134,7 @@ def load_config(path: str | Path | None = None) -> Config:
 
     # Find config file
     config_path = _find_config(path)
+    _load_dotenv(config_path)
     if config_path is None:
         _apply_env_overrides(config)
         return config
@@ -199,6 +200,22 @@ def _apply_env_overrides(config: Config) -> None:
         if value is not None:
             setattr(getattr(config, section), attr, value)
 
+    # OpenAI-compatible providers such as DeepSeek commonly reuse these
+    # variable names. MINICLAW_* above remains the explicit generic override.
+    aliases = {
+        "api_key": ("OPENAI_API_KEY", "DEEPSEEK_API_KEY"),
+        "base_url": ("OPENAI_BASE_URL", "DEEPSEEK_BASE_URL"),
+        "model": ("DEEPSEEK_MODEL",),
+    }
+    for attr, names in aliases.items():
+        if getattr(config.llm, attr) not in (None, "gpt-4o-mini"):
+            continue
+        for name in names:
+            value = os.getenv(name)
+            if value:
+                setattr(config.llm, attr, value)
+                break
+
     prefixes = os.getenv("MINICLAW_SHELL_ALLOWED_PREFIXES")
     if prefixes is not None:
         values = [p.strip() for p in prefixes.split(",") if p.strip()]
@@ -215,3 +232,36 @@ def _coerce_env_value(raw: str, caster: type) -> Any:
         except ValueError:
             return None
     return raw
+
+
+def _load_dotenv(config_path: Path | None) -> None:
+    """Load local ``.env`` entries without overriding real process variables.
+
+    The parser intentionally supports only the small dotenv subset needed for
+    API configuration. It avoids an extra runtime dependency and never logs
+    loaded values.
+    """
+    paths = [Path.cwd() / ".env"]
+    if config_path is not None:
+        paths.append(config_path.parent / ".env")
+    for path in dict.fromkeys(paths):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or not key.replace("_", "").isalnum():
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)

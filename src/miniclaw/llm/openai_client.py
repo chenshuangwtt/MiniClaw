@@ -1,12 +1,12 @@
-"""OpenAI LLM client — reads API key from environment.
+"""OpenAI-compatible LLM client — reads API settings from environment.
 
 Provides a clean interface compatible with both ``BaseLLM`` (``chat``,
 ``generate``), a simplified ``call`` method, and **streaming** support.
 
 Environment variables:
-    ``OPENAI_API_KEY`` — required.  The OpenAI API key.
-    ``OPENAI_BASE_URL`` — optional.  Override for compatible endpoints
-        (Ollama, vLLM, LiteLLM, etc.).
+    ``MINICLAW_API_KEY`` / ``OPENAI_API_KEY`` / ``DEEPSEEK_API_KEY`` — API key.
+    ``MINICLAW_BASE_URL`` / ``OPENAI_BASE_URL`` / ``DEEPSEEK_BASE_URL`` — optional
+    endpoint override for compatible providers.
 
 Usage::
 
@@ -44,7 +44,7 @@ from miniclaw.llm.base import BaseLLM, LLMResponse, ToolCall
 class OpenAIClient(BaseLLM):
     """OpenAI-compatible LLM client.
 
-    Reads the API key from the ``OPENAI_API_KEY`` environment variable.
+    Reads an API key from the supported OpenAI-compatible environment aliases.
     Raises ``ValueError`` if the key is not set.
 
     Args:
@@ -60,15 +60,25 @@ class OpenAIClient(BaseLLM):
         base_url: str | None = None,
     ) -> None:
 
-        # Resolve API key: explicit > env var
-        resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+        # Resolve explicit settings first, then OpenAI-compatible aliases.
+        resolved_key = (
+            api_key
+            or os.environ.get("MINICLAW_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("DEEPSEEK_API_KEY")
+        )
         if not resolved_key:
             raise ValueError(
-                "OPENAI_API_KEY is not set. "
-                "Either pass api_key=... or set the OPENAI_API_KEY environment variable."
+                "No OpenAI-compatible API key is set. "
+                "Pass api_key=... or set MINICLAW_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY."
             )
 
-        resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
+        resolved_base = (
+            base_url
+            or os.environ.get("MINICLAW_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("DEEPSEEK_BASE_URL")
+        )
 
         self._client = OpenAI(api_key=resolved_key, base_url=resolved_base)
         self.model = model

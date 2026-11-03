@@ -90,7 +90,7 @@ MiniClaw 将以上每个问题实现为独立、可测试的模块。整个系�
         └──────────────────────────────────────┘
 ```
 
-## Agent Loop
+## Agent 循环
 
 核心是一个**带有限状态解析器的 while 循环**：
 
@@ -278,9 +278,8 @@ uv sync --extra dev
 # 使用 FakeLLM（不需要 API key）
 uv run miniclaw run "列出当前目录的文件"
 
-# 使用 OpenAI
-export OPENAI_API_KEY=sk-...
-uv run miniclaw run --llm openai "总结项目结构"
+# 使用 OpenAI-compatible Provider 的 Native 模式
+uv run miniclaw run --llm openai --mode native "总结项目结构"
 
 # 交互模式
 uv run miniclaw chat --llm openai
@@ -306,11 +305,15 @@ uv run miniclaw trace summary
 
 # 复盘最近会话的 trace 事件
 uv run miniclaw trace replay
+
+# 查看完整 Run ID，再恢复指定任务
+uv run miniclaw runs list
+uv run miniclaw resume FULL_RUN_ID
 ```
 
 ## 配置
 
-`miniclaw.toml` 是项目本地配置。CLI 参数优先级最高，`MINICLAW_*` 环境变量可覆盖默认值和配置文件。
+`miniclaw.toml` 是项目本地配置。程序会加载本地 `.env`，但不会覆盖已经存在的进程环境变量。优先级为：CLI 参数、进程环境变量、`.env`、TOML、默认值。`.env` 仅用于本地，已被 Git 忽略。
 
 常用环境变量：
 
@@ -324,6 +327,24 @@ MINICLAW_ALLOW_SHELL=false
 MINICLAW_SHELL_ALLOWED_PREFIXES=echo,python -m pytest
 ```
 
+### DeepSeek 配置与运行
+
+DeepSeek 通过已有的 OpenAI-compatible client 接入。将 `.env.example` 复制为 `.env` 后填写本地 key，并选择当前账户真实可用的模型。支持 `OPENAI_*`、`DEEPSEEK_*` 与 `MINICLAW_*` 别名；密钥不会写入 trace、checkpoint、audit 或文档。
+
+```powershell
+uv run miniclaw doctor
+uv run miniclaw run --llm openai --model deepseek-flash --mode native --max-steps 4 "列出文件并读取 README.md，然后总结。"
+```
+
+本地最终验收中，已配置的 `api.deepseek.com` 端点使用 `deepseek-flash` 成功完成：基础 Native 调用、目录列举加文件读取的多工具任务，以及未知工具错误后的恢复。Provider 可用性和模型名称仍以账户实际权限为准。
+
+## 运行时边界
+
+- `ContextManager` 是会话内短期历史，负责限制工具结果并压缩旧上下文；`MemoryManager` 是选择性长期 SQLite 记忆，按用户和工作区隔离。
+- Chat 会复用同一个 `AgentEngine` 与 SQLite session，因此后续回合仍能看到前面的用户约束。
+- Checkpoint 用于诊断和恢复，并不提供副作用的 exactly-once 语义：`in_flight` 或 Native pending 调用必须人工核对；已完成和失败的 run 不能恢复。
+- `mem0ai` 是可选依赖（`uv sync --extra mem0`）；默认运行时只需要 SQLite。
+
 ## 运行演示
 
 ### 成功执行 + 错误恢复
@@ -331,8 +352,8 @@ MINICLAW_SHELL_ALLOWED_PREFIXES=echo,python -m pytest
 ```text
 $ uv run miniclaw run -v "列出当前目录并总结项目结构"
 
-🐾 MiniClaw v1.0.0 — session #1
-📋 Task: 列出当前目录并总结项目结构
+MiniClaw v1.0.0 - session #1
+Task: 列出当前目录并总结项目结构
 
 ✅ Answer (5 steps):
 
@@ -437,7 +458,7 @@ MiniClaw/
 │       ├── agents.py                # PlannerAgent, CoderAgent, ReviewerAgent
 │       └── coordinator.py           # Coordinator（顺序调度）
 │
-└── tests/                           # 660+ 个运行时测试
+└── tests/                           # 680+ 个运行时测试
 ```
 
 ## 简历亮点
@@ -450,10 +471,10 @@ MiniClaw/
 
 - **基于 Mem0 扩展长期语义记忆层**：在任务开始前根据用户请求检索相关偏好和项目事实并注入上下文，任务结束后抽取高价值记忆持久化；结合 SQLite 结构化存储 sessions/traces，实现短期执行状态与长期用户记忆解耦。
 
-## Future Work
+## 后续可选增强
 
-See `ROADMAP.md`.
+详见 `ROADMAP.md`。
 
-## License
+## 许可证
 
 MIT

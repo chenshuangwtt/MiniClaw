@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from miniclaw.redaction import redact_secrets
+
 
 @dataclass(frozen=True)
 class AuditEvent:
@@ -36,14 +38,14 @@ class AuditLogger:
         output: Any = None,
     ) -> None:
         """Append one audit event."""
-        preview = "" if output is None else str(output)[:200]
+        preview = "" if output is None else str(redact_secrets(output))[:200]
         self._events.append(
             AuditEvent(
                 tool_name=tool_name,
-                arguments=dict(arguments),
+                arguments=redact_secrets(dict(arguments)),
                 allowed=allowed,
                 success=success,
-                error=error,
+                error=redact_secrets(error),
                 output_preview=preview,
             )
         )

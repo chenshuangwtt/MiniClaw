@@ -1,15 +1,17 @@
-# Security And Reliability
+# 安全与可靠性
 
-MiniClaw is local-first and conservative by default. `PermissionPolicy` denies file writes, shell execution, network access, and external side effects until a caller explicitly enables them. File tools resolve relative paths beneath their configured workspace root and reject traversal outside it.
+MiniClaw 采用本地优先、保守默认值。`PermissionPolicy` 在调用方显式开启前拒绝文件写入、Shell 执行、网络访问和外部副作用。文件工具会将相对路径解析到配置的工作区根目录下，并拒绝越界路径。
 
-The default runtime memory backend is SQLite. `MemoryManager` writes only extractor-selected fragments, applies its configured conflict strategy, and rejects common API-key, password, token, card, and private-key patterns before persistence. Its records are scoped by `user_id` and workspace-derived project ID; this is logical isolation inside one local database, not encryption or multi-tenant authorization.
+默认长期记忆后端是 SQLite。`MemoryManager` 只保存抽取器选中的片段，应用配置的冲突策略，并在持久化前过滤常见 API Key、密码、Token、银行卡和私钥模式。记录按 `user_id` 与工作区派生的项目 ID 隔离；这是单库内的逻辑隔离，不是加密或多租户授权。
 
-`ToolExecutor` validates tool arguments before invocation and converts permission failures, schema failures, timeouts, exceptions, error payloads, and non-zero command exits into failed `Observation` values. A later model final answer cannot change an unresolved tool failure into a successful run.
+`ToolExecutor` 会在调用前校验参数，并将权限失败、Schema 失败、超时、异常、适配器业务错误（包括 MCP `isError: true`）和非零命令退出码转为失败的 `Observation`。后续模型给出最终回答，不能覆盖未解决工具失败。
 
-`RunShell` has a blocklist and optional command-prefix allowlist. `SandboxExecutor` provides best-effort process restrictions such as allowed working paths, environment sanitization, and timeouts. It is **not** an OS security boundary: do not run untrusted commands or credentials through it. Use a real container/VM/OS sandbox for hostile workloads.
+`RunShell` 有命令黑名单和可选前缀白名单。`SandboxExecutor` 提供允许工作路径、环境净化和超时等最佳努力进程限制；它**不是**操作系统安全边界。不要在其中执行不可信命令或传入凭据；面对恶意负载应使用真实的容器、虚拟机或系统级沙箱。
 
-`miniclaw resume RUN_ID` restores completed context after an interruption. It refuses to replay a checkpoint marked `in_flight`, because an external operation may already have succeeded without a saved result. A checkpoint waiting for approval runs only with `--approve-pending` and the corresponding capability flag, for example `--allow-file-write`.
+`miniclaw runs list` 展示完整 Run ID，`miniclaw resume FULL_RUN_ID` 用于恢复。已完成和失败的 Run 不能恢复；取消的 Run 可以从保存的 Checkpoint 恢复。`in_flight` Checkpoint 不会被重放，因为外部操作可能已成功但尚未保存结果。等待审批的 Checkpoint 只有在带 `--approve-pending` 和相应能力开关（如 `--allow-file-write`）时才会继续。
 
-Cancellation is cooperative between model/tool steps. A timeout returns control to the engine, but an arbitrary Python thread cannot be forcibly and safely terminated; use subprocess timeouts or real process isolation for commands that need hard cancellation. Native-provider pending tool calls are deliberately left for manual reconciliation rather than replayed.
+取消是模型/工具步骤间的协作式取消。超时会把控制权交还 Engine，但任意 Python 线程不能被安全地强制终止；需要硬取消时应使用子进程超时或真实进程隔离。Native Provider pending 调用也始终要求人工核对。上下文压缩会保留 Native assistant 工具调用与对应工具结果的合法关联，并在注入前截断过大的工具结果。
 
-Avoid committing `.env`, API keys, SQLite runtime data, generated traces, or `.venv`. `.gitignore` covers these local artifacts; review `git status --ignored` before publishing.
+Trace、Audit 和 Checkpoint 会脱敏常见 API Key、Authorization、Token、密码和 Secret 模式。这是纵深防御，不应替代“不要将凭据放进工具参数或模型提示词”的基本原则。
+
+不要提交 `.env`、API Key、SQLite 运行数据、生成的 Trace 或 `.venv`。`.gitignore` 已覆盖这些本地文件；发布前仍应检查 `git status --ignored`。

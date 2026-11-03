@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator
 
+from miniclaw.redaction import redact_secrets
+
 logger = logging.getLogger("miniclaw.trace")
 
 
@@ -49,7 +51,7 @@ class TraceLogger:
             "type": event_type,
             "ts": time.time(),
             "run_id": self._run_id,
-            "data": data or {},
+            "data": redact_secrets(data or {}),
         }
         self._events.append(event)
 

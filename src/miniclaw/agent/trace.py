@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from miniclaw.redaction import redact_secrets
+
 
 class StepTrace(BaseModel):
     """A single step's trace record.
@@ -75,12 +77,12 @@ class TraceLogger:
         """
         trace = StepTrace(
             step=step,
-            model_output=model_output,
+            model_output=redact_secrets(model_output),
             parsed_action=parsed_action,
             tool_name=tool_name,
-            arguments=arguments,
-            observation=observation,
-            error=error,
+            arguments=redact_secrets(arguments),
+            observation=redact_secrets(observation),
+            error=redact_secrets(error),
         )
         self.steps.append(trace)
         return trace

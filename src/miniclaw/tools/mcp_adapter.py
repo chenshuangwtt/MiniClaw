@@ -117,6 +117,11 @@ class MCPClient:
                 "arguments": arguments,
             },
         )
+        if result.get("isError") is True:
+            return {
+                "error": _mcp_error_text(result.get("content")),
+                "error_kind": "mcp",
+            }
         # MCP returns content as a list of content blocks
         content = result.get("content", [])
         if isinstance(content, list) and len(content) == 1:
@@ -331,3 +336,13 @@ def _convert_schema(mcp_schema: dict[str, Any]) -> dict[str, Any]:
         input_schema["type"] = "object"
 
     return input_schema
+
+
+def _mcp_error_text(content: Any) -> str:
+    """Extract a useful, non-protocol-error message from MCP content."""
+    if isinstance(content, list):
+        texts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+        text = "\n".join(part for part in texts if part)
+        if text:
+            return f"MCP tool reported an error: {text}"
+    return "MCP tool reported an error."

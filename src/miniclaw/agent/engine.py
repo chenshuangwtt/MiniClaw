@@ -21,6 +21,7 @@ from miniclaw.llm.base import BaseLLM, LLMResponse
 from miniclaw.memory.base import MemoryBackend, NullMemoryBackend
 from miniclaw.memory.extractor import MemoryExtractor
 from miniclaw.memory.manager import MemoryManager
+from miniclaw.redaction import redact_secrets
 from miniclaw.tools.audit import AuditLogger
 from miniclaw.tools.permissions import PermissionPolicy
 from miniclaw.tools.registry import ToolRegistry
@@ -113,9 +114,13 @@ class AgentEngine:
         self._tool_call_counts = {}
         self._tool_calls_taken = 0
         self._pending_action = None
+        # Context belongs to the engine/session, so every turn is recorded once
+        # before either transport builds its request.
+        self.context.add_message("user", user_task, user_turn=True)
         if self.store is not None:
             self.store.create_run(self.run_id, user_task, self.session_id)
         self._set_status(RunStatus.RUNNING)
+        self._checkpoint(0, TraceLogger(), None)
         memories = await self._search_memories(user_task, user_id)
         if self.parse_mode == "native":
             result = await self._run_native(user_task, memories)
@@ -136,13 +141,22 @@ class AgentEngine:
         only dispatched after this caller explicitly passes ``approve_pending``.
         """
         if self.store is None:
-            raise RuntimeError("A SQLiteStore is required to resume a run.")
+            raise RuntimeError(
+                "恢复任务需要 SQLiteStore（A SQLiteStore is required to resume a run.）"
+            )
         run = self.store.get_run(run_id)
         checkpoint = self.store.get_latest_checkpoint(run_id)
         if run is None or checkpoint is None:
-            raise ValueError(f"No resumable checkpoint exists for run '{run_id}'.")
-        if run["status"] in {RunStatus.COMPLETED.value, RunStatus.FAILED.value}:
-            raise ValueError(f"Run '{run_id}' is terminal and cannot be resumed.")
+            raise ValueError(
+                f"任务 '{run_id}' 没有可恢复的 Checkpoint（No resumable checkpoint exists）。"
+            )
+        if run["status"] in {
+            RunStatus.COMPLETED.value,
+            RunStatus.FAILED.value,
+        }:
+            raise ValueError(
+                f"任务 '{run_id}' 已处于终态，不能恢复（terminal and cannot be resumed）。"
+            )
 
         state = checkpoint["state"]
         pending = state.get("pending_action")
@@ -164,29 +178,34 @@ class AgentEngine:
                 return self._result(
                     False,
                     None,
-                    "Native pending tool calls require manual reconciliation; they are not replayed.",
+                    "Native 待处理工具调用需要人工核对，不会自动重放（manual reconciliation required）。",
                     trace,
                     len(trace.steps),
                     RunStatus.WAITING_APPROVAL,
                 )
             if pending.get("state") == "in_flight":
-                error = "Pending tool may have started without a saved result; manual reconciliation required."
+                error = "待处理工具可能已执行但结果未保存，必须人工核对（manual reconciliation required）。"
                 return self._result(False, None, error, trace, len(trace.steps), RunStatus.FAILED)
             if not approve_pending:
                 self._pending_action = pending
                 return self._result(
                     False,
                     None,
-                    "Run is waiting for explicit approval of its pending tool call.",
+                    "任务正在等待对待处理工具调用的显式审批（waiting for explicit approval）。",
                     trace,
                     len(trace.steps),
                     RunStatus.WAITING_APPROVAL,
                 )
             name = str(pending["tool_name"])
             arguments = dict(pending["arguments"])
-            self.permission_policy.approval_required_tools.discard(name)
-            observation = await self._execute_budgeted(name, arguments)
-            self.permission_policy.approval_required_tools.add(name)
+            was_approval_required = name in self.permission_policy.approval_required_tools
+            if was_approval_required:
+                self.permission_policy.approval_required_tools.remove(name)
+            try:
+                observation = await self._execute_budgeted(name, arguments)
+            finally:
+                if was_approval_required:
+                    self.permission_policy.approval_required_tools.add(name)
             step = len(trace.steps) + 1
             trace.log_step(
                 step=step,
@@ -238,7 +257,13 @@ class AgentEngine:
         schemas = self._portable_schemas()
         for step in range(start_step, self.max_steps + 1):
             if self._run_timed_out():
-                return self._result(False, None, "Run exceeded its time budget.", trace, step - 1)
+                return self._result(
+                    False,
+                    None,
+                    "任务超过时间预算（Run exceeded its time budget.）",
+                    trace,
+                    step - 1,
+                )
             cancelled = self._cancel_result(trace, step - 1)
             if cancelled:
                 return cancelled
@@ -281,7 +306,11 @@ class AgentEngine:
                 self.context.add_message("assistant", parsed.answer)
                 if last_tool_failed:
                     return self._result(
-                        False, None, "Task ended after an unresolved tool failure.", trace, step
+                        False,
+                        None,
+                        "任务因未解决的工具失败而结束（Task ended after an unresolved tool failure.）",
+                        trace,
+                        step,
                     )
                 return self._result(True, parsed.answer, None, trace, step)
 
@@ -327,7 +356,11 @@ class AgentEngine:
                     return self._result(False, None, observation.error, trace, step)
 
         return self._result(
-            False, None, f"Exceeded maximum steps ({self.max_steps}).", trace, self.max_steps
+            False,
+            None,
+            f"超过最大执行步数（Exceeded maximum steps: {self.max_steps}）。",
+            trace,
+            self.max_steps,
         )
 
     async def _run_native(
@@ -339,7 +372,6 @@ class AgentEngine:
         start_step: int = 1,
     ) -> AgentResult:
         trace = trace or TraceLogger()
-        messages = self._native_messages(task, memories)
         tools = self.registry.to_openai_tools()
         errors = 0
         trace_step = start_step - 1
@@ -347,11 +379,21 @@ class AgentEngine:
         for round_number in range(1, self.max_steps + 1):
             if self._run_timed_out():
                 return self._result(
-                    False, None, "Run exceeded its time budget.", trace, round_number - 1
+                    False,
+                    None,
+                    "任务超过时间预算（Run exceeded its time budget.）",
+                    trace,
+                    round_number - 1,
                 )
             cancelled = self._cancel_result(trace, round_number - 1)
             if cancelled:
                 return cancelled
+            messages = self._prepare_native_request(task, memories, tools)
+            if messages is None:
+                trace_step += 1
+                error = "Native 请求在压缩后仍超过上下文预算（context budget exceeded）。"
+                trace.log_step(step=trace_step, parsed_action="context_error", error=error)
+                return self._result(False, None, error, trace, round_number)
             try:
                 response = await asyncio.to_thread(self.llm.chat, messages, tools)
             except Exception as exc:
@@ -387,13 +429,12 @@ class AgentEngine:
                     return self._result(
                         False,
                         None,
-                        "Task ended after an unresolved tool failure.",
+                        "任务因未解决的工具失败而结束（Task ended after an unresolved tool failure.）",
                         trace,
                         round_number,
                     )
                 return self._result(True, response.content, None, trace, round_number)
 
-            messages.append(_assistant_tool_message(response))
             self.context.add_message(
                 "assistant", response.content, tool_calls=_tool_call_payloads(response)
             )
@@ -425,9 +466,6 @@ class AgentEngine:
                     ensure_ascii=False,
                     default=str,
                 )
-                messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": content}
-                )
                 self.context.add_message("tool", content, tool_name=call.name, tool_call_id=call.id)
                 self._checkpoint(trace_step, trace, observation)
                 if (
@@ -458,7 +496,11 @@ class AgentEngine:
                         return self._result(False, None, observation.error, trace, round_number)
 
         return self._result(
-            False, None, f"Exceeded maximum steps ({self.max_steps}).", trace, self.max_steps
+            False,
+            None,
+            f"超过最大执行步数（Exceeded maximum steps: {self.max_steps}）。",
+            trace,
+            self.max_steps,
         )
 
     async def _execute(self, name: str, arguments: dict[str, Any]) -> Observation:
@@ -473,7 +515,7 @@ class AgentEngine:
             return Observation(
                 tool_name=name,
                 success=False,
-                error=f"Tool-call budget exceeded ({self.max_tool_calls}).",
+                error=f"工具调用次数超过预算（Tool-call budget exceeded: {self.max_tool_calls}）。",
                 error_kind="budget",
             )
         if self._tool_call_counts[call_key] > self.max_repeated_tool_calls:
@@ -481,8 +523,8 @@ class AgentEngine:
                 tool_name=name,
                 success=False,
                 error=(
-                    "Repeated identical tool call blocked "
-                    f"after {self.max_repeated_tool_calls} executions."
+                    "已阻止重复的相同工具调用（Repeated identical tool call blocked "
+                    f"after {self.max_repeated_tool_calls} executions）。"
                 ),
                 error_kind="budget",
             )
@@ -499,9 +541,11 @@ class AgentEngine:
             return
         self.context.add_message("assistant", f"Called {call.tool_name}({call.arguments})")
         self.context.add_message(
-            "tool", observation.error or "Unknown tool error", tool_name=call.tool_name
+            "tool",
+            observation.error or "未知工具错误（Unknown tool error）",
+            tool_name=call.tool_name,
         )
-        self._inject_recovery(observation.error or "Unknown tool error")
+        self._inject_recovery(observation.error or "未知工具错误（Unknown tool error）")
 
     def _native_messages(self, task: str, memories: list[str]) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
@@ -529,8 +573,36 @@ class AgentEngine:
                 if role == "tool" and message.get("name"):
                     native_message["name"] = message["name"]
                 messages.append(native_message)
-        messages.append({"role": "user", "content": task})
         return messages
+
+    def _prepare_native_request(
+        self, task: str, memories: list[str], tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | None:
+        """Build a provider-valid native request within the actual request budget."""
+        # A checkpoint created by an older release may not include the task in
+        # its context. Add it once so reconstruction remains valid.
+        if not any(
+            message.get("role") == "user" and message.get("content") == task
+            for message in self.context.get_messages()
+        ):
+            self.context.add_message("user", task)
+
+        for _ in range(3):
+            messages = self._native_messages(task, memories)
+            if self._native_request_tokens(messages, tools) <= self.context.max_context_tokens:
+                return messages
+            if not self.context.compress(force=True):
+                break
+        messages = self._native_messages(task, memories)
+        if self._native_request_tokens(messages, tools) <= self.context.max_context_tokens:
+            return messages
+        return None
+
+    def _native_request_tokens(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> int:
+        """Estimate the whole provider payload, including function schemas."""
+        return self.llm.count_tokens(messages) + len(json.dumps(tools, default=str)) // 4
 
     def _portable_schemas(self) -> list[dict[str, Any]]:
         return [
@@ -538,15 +610,30 @@ class AgentEngine:
         ]
 
     def _portable_history(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "step": "",
-                "action": message.get("content", ""),
-                "observation": message.get("content", "") if message.get("role") == "tool" else "",
-            }
-            for message in self.context.get_messages()
-            if message.get("role") in {"assistant", "tool", "summary"}
-        ]
+        messages = self.context.get_messages()
+        latest_user_turn = max(
+            (
+                index
+                for index, message in enumerate(messages)
+                if message.get("role") == "user" and message.get("user_turn")
+            ),
+            default=-1,
+        )
+        history: list[dict[str, Any]] = []
+        for index, message in enumerate(messages):
+            role = message.get("role")
+            if role not in {"user", "assistant", "tool", "summary"}:
+                continue
+            if index == latest_user_turn:
+                continue
+            history.append(
+                {
+                    "step": "",
+                    "action": f"{role}: {message.get('content', '')}",
+                    "observation": message.get("content", "") if role == "tool" else "",
+                }
+            )
+        return history
 
     async def _search_memories(self, task: str, user_id: str) -> list[str]:
         try:
@@ -573,10 +660,17 @@ class AgentEngine:
         if not self._cancel_requested:
             return None
         trace.log_step(
-            step=max(steps + 1, 1), parsed_action="cancelled", error="Run cancelled by caller."
+            step=max(steps + 1, 1),
+            parsed_action="cancelled",
+            error="任务已由调用方取消（Run cancelled by caller.）",
         )
         return self._result(
-            False, None, "Run cancelled by caller.", trace, steps, RunStatus.CANCELLED
+            False,
+            None,
+            "任务已由调用方取消（Run cancelled by caller.）",
+            trace,
+            steps,
+            RunStatus.CANCELLED,
         )
 
     def _result(
@@ -614,7 +708,7 @@ class AgentEngine:
             state["pending_action"] = self._pending_action
         if observation is not None:
             state["last_observation"] = observation.model_dump(mode="json")
-        self.store.save_checkpoint(self.run_id, sequence, state)
+        self.store.save_checkpoint(self.run_id, sequence, redact_secrets(state))
 
 
 def _tool_call_payloads(response: LLMResponse) -> list[dict[str, Any]]:

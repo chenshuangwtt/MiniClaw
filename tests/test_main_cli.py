@@ -4,6 +4,7 @@ from argparse import Namespace
 from contextlib import suppress
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -152,6 +153,16 @@ class TestRunCommand:
         captured = capsys.readouterr()
         assert "MiniClaw" in captured.out
 
+    def test_run_prints_full_id_and_runs_list_can_find_it(self, tmp_path, capsys):
+        db = tmp_path / "test.db"
+        main(["--db", str(db), "run", "test task"])
+        run_output = capsys.readouterr().out
+        match = re.search(r"Run ID: ([0-9a-f]{32})", run_output)
+        assert match is not None
+
+        main(["--db", str(db), "runs", "list"])
+        assert match.group(1) in capsys.readouterr().out
+
 
 # ============================================================
 # chat command
@@ -259,6 +270,17 @@ class TestMemoryCommand:
         main(["--db", str(db), "memory"])
         captured = capsys.readouterr()
         assert "Usage" in captured.out
+
+    def test_memory_delete_is_scoped_to_exact_text(self, tmp_path, capsys):
+        db = tmp_path / "test.db"
+        main(["--db", str(db), "memory", "add", "remember this", "--user-id", "alice"])
+        capsys.readouterr()
+
+        main(["--db", str(db), "memory", "delete", "remember this", "--user-id", "alice"])
+        assert "deleted" in capsys.readouterr().out
+
+        main(["--db", str(db), "memory", "search", "remember", "--user-id", "alice"])
+        assert "No memories" in capsys.readouterr().out
 
     def test_memory_add(self, tmp_path, capsys):
         db = tmp_path / "test.db"

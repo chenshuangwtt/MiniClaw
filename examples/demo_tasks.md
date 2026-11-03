@@ -1,10 +1,10 @@
-# MiniClaw Demo 展示
+# MiniClaw 演示说明
 
 三个可运行的 Demo，分别展示 MiniClaw 的核心能力。
 
 ---
 
-## Demo 1：项目结构分析
+## 演示 1：项目结构分析
 
 ### 技术亮点
 
@@ -91,7 +91,7 @@ uv run python examples/demo_project_analysis.py
 
 ---
 
-## Demo 2：异常工具调用恢复
+## 演示 2：异常工具调用恢复
 
 ### 技术亮点
 
@@ -179,7 +179,7 @@ uv run python examples/demo_recovery.py
 
 ---
 
-## Demo 3：上下文压缩
+## 演示 3：上下文压缩
 
 ### 技术亮点
 
@@ -243,7 +243,7 @@ uv run python examples/demo_context_compression.py
 
 ---
 
-## Demo 4：SQLite 持久化记忆
+## 演示 4：SQLite 持久化记忆
 
 ### 技术亮点
 
@@ -283,22 +283,22 @@ uv run python examples/demo_memory.py
 
 ---
 
-## 运行全部 Demo
+## 运行全部演示
 
 ```bash
 # 安装依赖
 uv pip install -e ".[dev]"
 
-# Demo 1: 项目结构分析
+# 演示 1：项目结构分析
 uv run python examples/demo_project_analysis.py
 
-# Demo 2: 异常恢复
+# 演示 2：异常恢复
 uv run python examples/demo_recovery.py
 
-# Demo 3: 上下文压缩
+# 演示 3：上下文压缩
 uv run python examples/demo_context_compression.py
 
-# Demo 4: SQLite 持久化记忆
+# 演示 4：SQLite 持久化记忆
 uv run python examples/demo_memory.py
 ```
 

@@ -72,6 +72,8 @@ class ContextManager:
             content: The message text.
             **extra: Additional fields (e.g., ``tool_name``, ``tool_call_id``).
         """
+        if role == "tool":
+            content = _bounded_tool_result(content, self.max_tool_result_chars)
         msg: dict[str, Any] = {"role": role, "content": content}
         msg.update(extra)
         self._messages.append(msg)
@@ -143,7 +145,7 @@ class ContextManager:
         """True if current token usage exceeds the budget."""
         return self.estimate_tokens() > self.max_context_tokens
 
-    def compress(self) -> bool:
+    def compress(self, force: bool = False) -> bool:
         """Compress old messages into a summary to fit the budget.
 
         Strategy:
@@ -155,7 +157,7 @@ class ContextManager:
         Returns:
             True if compression was performed, False if already within budget.
         """
-        if not self.should_compress():
+        if not force and not self.should_compress():
             return False
 
         # Separate system messages from the front
@@ -173,8 +175,17 @@ class ContextManager:
         # Preserve explicit constraints independently from the recent tail.
         pinned = [message for message in rest if message.get("important")]
         unpinned = [message for message in rest if not message.get("important")]
-        recent = unpinned[-self.recent_keep :]
-        old = unpinned[: -self.recent_keep]
+        recent_start = max(len(unpinned) - self.recent_keep, 0)
+        # A native assistant tool-call message must be immediately followed by
+        # every matching tool result. Do not cut that protocol pair in half.
+        while recent_start > 0 and unpinned[recent_start].get("role") == "tool":
+            recent_start -= 1
+            if unpinned[recent_start].get("role") == "assistant" and unpinned[recent_start].get(
+                "tool_calls"
+            ):
+                break
+        recent = unpinned[recent_start:]
+        old = unpinned[:recent_start]
 
         # Generate summary
         summary_text = self._summarizer(old)

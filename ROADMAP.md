@@ -1,26 +1,28 @@
-# MiniClaw Roadmap
+# MiniClaw 开发路线图
 
-## v1.0.0 - Local Agent Runtime
+## v1.0.0：本地 Agent 运行时
 
-Status: complete for local, educational use.
+状态：面向本地学习与演示的版本已完成。
 
-- Unified async-first engine with sync and async facades
-- Portable JSON and OpenAI-compatible native Tool Calling
-- Multi-call execution with tool-call ID association
-- Schema validation, timeout/error observations, capability-based policy, and audit events
-- Workspace-bound file tools; file write, shell, network, and external-side-effect capabilities default to deny
-- SQLite session, trace, run, checkpoint, and scoped long-term-memory persistence
-- Offline repository-maintenance demonstration and GitHub Actions CI
+- 统一的 async-first Engine，以及同步/异步外观
+- Portable JSON 与 OpenAI-compatible Native Tool Calling
+- 多工具调用执行与工具调用 ID 关联
+- Schema 校验、超时/错误 Observation、能力策略和审计事件
+- 受工作区边界限制的文件工具；文件写入、Shell、网络和外部副作用默认拒绝
+- SQLite 会话、Trace、Run、Checkpoint 与范围化长期记忆持久化
+- 离线仓库维护演示与 GitHub Actions CI
+- 本地 `.env` 支持、完整 Run 查询/恢复体验、持久化多轮 Chat 与 DeepSeek Native Tool 验收
 
-## Explicit Limits
+## 明确限制
 
-- This is not a security sandbox. `SandboxExecutor` narrows environment, paths, and command patterns, but it cannot provide OS/container isolation.
-- Checkpoints resume cancelled context and explicit approvals. A checkpoint marked `in_flight` is never retried automatically and requires manual reconciliation.
-- Native-provider pending tool calls and arbitrary in-process thread cancellation require manual reconciliation/process isolation.
-- Trace replay is read-only presentation, not execution resume.
-- Provider streaming exists at `BaseLLM.stream()` / `OpenAIClient.stream()`; the CLI does not pretend a completed answer is live streaming.
+- 这不是安全沙箱。`SandboxExecutor` 只能收窄环境、路径和命令模式，无法提供 OS/容器级隔离。
+- Checkpoint 可恢复取消后的上下文和显式审批；标记为 `in_flight` 的 Checkpoint 永不自动重试，必须人工核对。
+- Native Provider pending 工具调用和任意进程内线程取消都需要人工核对或进程隔离。
+- Trace 回放是只读展示，不是任务恢复。
+- Provider 流式能力位于 `BaseLLM.stream()` / `OpenAIClient.stream()`；CLI 不会将已完成回答伪装为实时流。
+- Provider 兼容性依赖账户和模型。DeepSeek 真实验收只是小规模只读 smoke test，不代表通用生产可靠性。
 
-## Not Planned
+## 暂不计划
 
-- Agent frameworks, web UI, chat channels, distributed execution, or hidden autonomous background work
-- Automatic destructive actions or bypasses for the permission policy
+- 接入 Agent 框架、Web UI、聊天渠道、分布式执行或隐藏的自动后台任务
+- 自动破坏性操作，或绕过权限策略
