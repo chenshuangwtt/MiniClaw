@@ -224,6 +224,33 @@ class TestChatCommand:
             row = conn.execute("SELECT COUNT(*) as cnt FROM messages").fetchone()
             assert row["cnt"] >= 1  # at least the user message saved
 
+    def test_chat_trace_keeps_two_turn_execution_order(self, tmp_path, monkeypatch):
+        from miniclaw.llm.fake import FakeLLM
+        from miniclaw.storage.sqlite_store import SQLiteStore
+
+        db = tmp_path / "test.db"
+        llm = FakeLLM(
+            [
+                '{"type":"tool_call","tool_name":"list_files","arguments":{"path":"."}}',
+                '{"type":"final_answer","answer":"first answer"}',
+                '{"type":"tool_call","tool_name":"list_files","arguments":{"path":"."}}',
+                '{"type":"final_answer","answer":"second answer"}',
+            ]
+        )
+        inputs = iter(["first task", "second task", "exit"])
+        monkeypatch.setattr("miniclaw.cli._create_llm_from_config", lambda _: llm)
+        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+
+        assert main(["--db", str(db), "chat"]) == 0
+
+        with SQLiteStore(db) as store:
+            session_id = store._get_conn().execute("SELECT id FROM sessions").fetchone()["id"]
+            traces = store.list_traces(session_id)
+
+        assert [trace["step"] for trace in traces] == [1, 2, 1, 2]
+        actions = [json.loads(trace["event_json"])["parsed_action"] for trace in traces]
+        assert actions == ["tool_call", "final_answer", "tool_call", "final_answer"]
+
 
 # ============================================================
 # memory command

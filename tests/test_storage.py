@@ -273,7 +273,7 @@ class TestTraces:
             assert traces[0]["step"] == 1
             assert traces[1]["step"] == 2
 
-    def test_traces_ordered_by_step(self):
+    def test_traces_ordered_by_insertion(self):
         with SQLiteStore(":memory:") as store:
             sid = store.create_session()
             store.save_trace(sid, step=3, event_json='{"s": 3}')
@@ -281,7 +281,7 @@ class TestTraces:
             store.save_trace(sid, step=2, event_json='{"s": 2}')
             traces = store.list_traces(sid)
             steps = [t["step"] for t in traces]
-            assert steps == [1, 2, 3]
+            assert steps == [3, 1, 2]
 
     def test_traces_limited(self):
         with SQLiteStore(":memory:") as store:

@@ -2,6 +2,8 @@
 
 ## 1.0.0
 
+- 修复 Windows CI 中 CLI 子进程的 UTF-8 输出与环境隔离；安装后的 `miniclaw` 命令和 `python main.py` 均验证统一退出码。
+- Trace 查询改为 SQLite 插入顺序，保证同一 Chat Session 的多轮 Run 按真实执行顺序 replay；同步更新 FakeLLM v1.0 架构演示内容。
 - 修复 Native Tool Calling 嵌套 JSON 参数的递归脱敏；含敏感参数的待恢复调用必须重新授权，不能用脱敏值重放。
 - 修复 CLI 退出状态：成功为 `0`、Agent 失败为 `1`、参数/配置错误为 `2`、等待审批为 `3`。
 - 最终运行时加固：本地 `.env` 及明确优先级、完整 Run ID 和 `runs list`、持久化多轮 Chat、Native 请求预算压缩、MCP `isError` 处理与诊断记录脱敏。

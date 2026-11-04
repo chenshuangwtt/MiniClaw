@@ -32,7 +32,10 @@ MiniClaw 将以上每个问题实现为独立、可测试的模块。整个系�
 - 执行器会在调用前校验 JSON Schema 参数，返回结构化失败；工具报错和非零 Shell 退出码不会被记成成功。
 - 每个工具都有能力类别：只读、文件写入、Shell、网络、外部副作用；敏感能力默认拒绝，必须显式开启。
 - SQLite 除会话、消息、记忆与 trace 外，还保存运行记录和恢复检查点。trace replay 只复盘，不会重新执行工具。
+- 同一 Chat Session 的多轮 Trace 按 SQLite 插入顺序复盘；即使每个 Run 都从 Step 1 计数，也不会按步骤号交错重排。
 - `examples/demo_repository_maintenance.py` 提供完整离线维护演示：FakeLLM、临时工作区、显式写入/Shell 授权和真实测试命令。
+
+Windows CI 的 CLI 子进程显式使用 UTF-8。离线集成测试固定使用 FakeLLM、临时工作目录和独立 SQLite 数据库，不读取本地 DeepSeek 配置，也不会发起网络请求。
 
 ## v0.4 运行时强化
 

@@ -81,6 +81,8 @@ uv run miniclaw trace replay
 
 命令退出码：`0` 表示完成；`1` 表示 Agent 失败；`2` 表示参数或配置错误；`3` 表示任务暂停并等待人工审批。CI 或 PowerShell 脚本应检查 `$LASTEXITCODE`。
 
+Windows CI 为 CLI 子进程显式使用 UTF-8；离线集成测试固定使用 FakeLLM、临时工作目录和独立 SQLite 数据库，不会读取本地 DeepSeek 配置或发起网络请求。相同 Chat Session 的 Trace 按 SQLite 插入顺序复盘，因此多个 Run 重复从 Step 1 计数时仍保持真实执行顺序。
+
 ## 安全与恢复边界
 
 - 文件写入、Shell、网络和外部副作用默认拒绝，必须在单次运行中显式授权。

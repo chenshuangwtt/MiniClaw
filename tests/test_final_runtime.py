@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 from miniclaw.agent.engine import AgentResult
-from miniclaw.agent.config import load_config
+from miniclaw.agent.config import Config, load_config
 from miniclaw.agent.context import ContextManager
 from miniclaw.agent.loop import AgentLoop
 from miniclaw.agent.trace import TraceLogger
 from miniclaw.agent.state import RunStatus
-from miniclaw.cli import EXIT_AGENT_FAILED, EXIT_SUCCESS, EXIT_WAITING_APPROVAL, _result_exit_code
+from miniclaw.cli import (
+    EXIT_AGENT_FAILED,
+    EXIT_SUCCESS,
+    EXIT_WAITING_APPROVAL,
+    _create_llm_from_config,
+    _result_exit_code,
+)
 from miniclaw.llm.base import BaseLLM, LLMResponse, ToolCall
 from miniclaw.llm.fake import FakeLLM
 from miniclaw.redaction import redact_secrets
@@ -241,39 +249,114 @@ def test_cli_exit_code_mapping_and_real_process_exit_codes(tmp_path) -> None:
         == EXIT_WAITING_APPROVAL
     )
 
-    success = subprocess.run(
-        [sys.executable, "main.py", "--db", str(tmp_path / "ok.db"), "run", "test task"],
-        cwd=".",
-        capture_output=True,
-        text=True,
-        check=False,
+    repo_root = Path(__file__).resolve().parents[1]
+    isolated_config = tmp_path / "missing-miniclaw.toml"
+    (tmp_path / "README.md").write_text("# isolated CLI fixture\n", encoding="utf-8")
+    (tmp_path / "src" / "miniclaw" / "agent").mkdir(parents=True)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("MINICLAW_")}
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+    ):
+        env.pop(name, None)
+    env.update(
+        {
+            "MINICLAW_LLM_PROVIDER": "fake",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        }
     )
-    exhausted = subprocess.run(
+
+    def run_cli(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            env=env,
+            check=False,
+        )
+
+    main_script = str(repo_root / "main.py")
+    common_args = ["--config", str(isolated_config)]
+    success = run_cli(
         [
             sys.executable,
-            "main.py",
+            main_script,
+            *common_args,
+            "--db",
+            str(tmp_path / "ok.db"),
+            "run",
+            "test task",
+        ]
+    )
+    exhausted = run_cli(
+        [
+            sys.executable,
+            main_script,
+            *common_args,
             "--db",
             str(tmp_path / "failed.db"),
             "run",
             "--max-steps",
             "1",
             "test task",
-        ],
-        cwd=".",
-        capture_output=True,
-        text=True,
-        check=False,
+        ]
     )
-    invalid = subprocess.run(
-        [sys.executable, "main.py", "--not-a-real-option"],
-        cwd=".",
-        capture_output=True,
-        text=True,
-        check=False,
+    invalid = run_cli([sys.executable, main_script, "--not-a-real-option"])
+
+    console_name = "miniclaw.exe" if os.name == "nt" else "miniclaw"
+    installed_cli = Path(sys.executable).with_name(console_name)
+    assert installed_cli.exists()
+    installed_success = run_cli(
+        [str(installed_cli), *common_args, "--db", str(tmp_path / "console.db"), "run", "test task"]
+    )
+    installed_exhausted = run_cli(
+        [
+            str(installed_cli),
+            *common_args,
+            "--db",
+            str(tmp_path / "console-failed.db"),
+            "run",
+            "--max-steps",
+            "1",
+            "test task",
+        ]
     )
     assert success.returncode == EXIT_SUCCESS
+    assert "任务：" in success.stdout
     assert exhausted.returncode == EXIT_AGENT_FAILED
     assert invalid.returncode == 2
+    assert installed_success.returncode == EXIT_SUCCESS
+    assert installed_exhausted.returncode == EXIT_AGENT_FAILED
+
+
+def test_fake_llm_demo_describes_the_v1_runtime() -> None:
+    llm = _create_llm_from_config(Config())
+    for _ in range(4):
+        llm.generate("demo")
+
+    answer = json.loads(llm.generate("demo"))["answer"]
+
+    for component in (
+        "AgentEngine",
+        "AgentLoop",
+        "AsyncAgentLoop",
+        "ToolRegistry / ToolExecutor",
+        "ContextManager",
+        "MemoryManager",
+        "SQLiteStore",
+        "Checkpoint",
+        "TraceLogger",
+    ):
+        assert component in answer
+    assert "确定性的 FakeLLM 演示脚本" in answer
+    assert "四张表" not in answer
 
 
 def test_sensitive_pending_checkpoint_is_redacted_and_never_replayed() -> None:

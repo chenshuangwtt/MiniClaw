@@ -552,7 +552,7 @@ class SQLiteStore:
         return cur.lastrowid  # type: ignore[return-value]
 
     def list_traces(self, session_id: int, limit: int = 100) -> list[dict[str, Any]]:
-        """Return traces for a session in step order.
+        """Return traces for a session in their persisted execution order.
 
         Args:
             session_id: The session to query.
@@ -565,7 +565,7 @@ class SQLiteStore:
         rows = conn.execute(
             "SELECT id, step, event_json, created_at "
             "FROM traces WHERE session_id = ? "
-            "ORDER BY step ASC LIMIT ?",
+            "ORDER BY id ASC LIMIT ?",
             (session_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
